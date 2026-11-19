@@ -1,0 +1,25 @@
+[package]
+name = "rinui-gallery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reference RinUI Gallery hosted by rinui-rs"
+
+[dependencies]
+rinui-host = { workspace = true }
+rinui-platform = { workspace = true }
+cxx = { workspace = true }
+cxx-qt = { workspace = true }
+cxx-qt-lib = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+cxx-qt-build = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'phase2-*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit-and-format:
+    name: Upstream Audit & Rust Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Verify clean submodule and upstream qmldir contract
+        run: python3 scripts/audit_upstream.py
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+  build-and-test:
+    name: ${{ matrix.os }} (Qt ${{ matrix.qt_version }})
+    needs: audit-and-format
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            qt_version: "6.9.3"
+            qt_arch: clang_64
+            qt_modules: "qt5compat"
+          - os: windows-latest
+            qt_version: "6.9.3"
+            qt_arch: win64_msvc2022_64
+            qt_modules: "qt5compat"
+          - os: ubuntu-latest
+            qt_version: "6.9.3"
+            qt_arch: linux_gcc_64
+            qt_modules: "qt5compat"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux X11/Wayland/GL/Xvfb dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libfontconfig1-dev libfreetype6-dev libx11-dev libx11-xcb-dev \
+            libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-util1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 \
+            libwayland-client0 libwayland-egl1 libdbus-1-3 libegl1 \
+            mesa-common-dev fonts-dejavu-core xvfb
+
+      - name: Install Qt 6 via aqtinstall
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ matrix.qt_version }}
+          arch: ${{ matrix.qt_arch }}
+          modules: ${{ matrix.qt_modules }}
+          cache: true
+
+      - name: Export QMAKE and Qt diagnostics
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            QMAKE_BIN="${Qt6_DIR}/bin/qmake.exe"
+            echo "${Qt6_DIR}/bin" >> "${GITHUB_PATH}"
+          else
+            QMAKE_BIN="${Qt6_DIR}/bin/qmake"
+          fi
+          echo "QMAKE=${QMAKE_BIN}" >> "${GITHUB_ENV}"
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            echo "LD_LIBRARY_PATH=${Qt6_DIR}/lib:${LD_LIBRARY_PATH:-}" >> "${GITHUB_ENV}"
+          fi
+          "${QMAKE_BIN}" --version
+          "${QMAKE_BIN}" -query
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust toolchain diagnostics
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy across workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run workspace unit and integration tests (offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cargo test --workspace
+
+      - name: Build release rinui-gallery
+        run: cargo build --release -p rinui-gallery
+
+      - name: Package & validate macOS .app bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ./scripts/package_macos.sh target/release/rinui-gallery dist
+          otool -L dist/RinUIGallery.app/Contents/MacOS/RinUIGallery
+          cat dist/RinUIGallery.app/Contents/Resources/qt.conf
+          TMP_DIR="$(mktemp -d)"
+
+          cp target/release/rinui-gallery "${TMP_DIR}/rinui-gallery"
+          (
+            cd "${TMP_DIR}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR QT_QPA_PLATFORM=offscreen \
+              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin"
+          )
+
+          cp -R dist/RinUIGallery.app "${TMP_DIR}/RinUIGallery.app"
+          if (cd "${TMP_DIR}" && env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+              QT_QPA_PLATFORM=cocoa ./RinUIGallery.app/Contents/MacOS/RinUIGallery --smoke-test --config-dir "${TMP_DIR}/cfg-cocoa"); then
+            echo "macOS Cocoa QPA smoke test inside isolated .app: PASSED"
+          else
+            echo "::notice::macOS Cocoa QPA smoke test unavailable on headless CI runner; testing isolated .app frameworks/QML with temporary qoffscreen plugin"
+            QT_PLUGINS="$("${QMAKE}" -query QT_INSTALL_PLUGINS)"
+            cp "${QT_PLUGINS}/platforms/libqoffscreen.dylib" "${TMP_DIR}/RinUIGallery.app/Contents/PlugIns/platforms/"
+            codesign --force --deep --sign - "${TMP_DIR}/RinUIGallery.app"
+            (
+              cd "${TMP_DIR}"
+              env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+                QT_QPA_PLATFORM=offscreen ./RinUIGallery.app/Contents/MacOS/RinUIGallery --smoke-test --config-dir "${TMP_DIR}/cfg-app-offscreen"
+            )
+          fi
+          rm -rf "${TMP_DIR}"
+
+      - name: Package & validate Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package_windows.ps1 -BinaryPath target\release\rinui-gallery.exe -OutputDir dist\RinUIGallery-win64
+          $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("rinui-win-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+
+          # 1. Verify isolated raw binary under offscreen QPA first
+          $rawBin = Join-Path $tmpDir "rinui-gallery-raw.exe"
+          Copy-Item "target\release\rinui-gallery.exe" $rawBin
+          $origPath = $env:Path
+          $origDev = $env:RINUI_DEV_PATH
+          $origUpstream = $env:RINUI_UPSTREAM_DIR
+          try {
+            Remove-Item Env:RINUI_DEV_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:RINUI_UPSTREAM_DIR -ErrorAction SilentlyContinue
+            $env:QT_QPA_PLATFORM = "offscreen"
+            & $rawBin --smoke-test --config-dir (Join-Path $tmpDir "cfg-raw-offscreen")
+            if ($LASTEXITCODE -ne 0) {
+              throw "Isolated Windows raw binary offscreen smoke test failed with exit code $LASTEXITCODE"
+            }
+
+            # 2. Verify windeployqt package completely isolated from Qt6_DIR\bin in PATH
+            $pkgDir = Join-Path $tmpDir "pkg"
+            Copy-Item -Recurse -Force "dist\RinUIGallery-win64" $pkgDir
+            $qtBinClean = ($env:Qt6_DIR -replace '/', '\').TrimEnd('\') + "\bin"
+            $filteredPath = ($origPath -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $qtBinClean) }) -join ';'
+            $env:Path = $filteredPath
+
+            $exe = Join-Path $pkgDir "rinui-gallery.exe"
+            Push-Location $pkgDir
+            $env:QT_QPA_PLATFORM = "windows"
+            & $exe --smoke-test --config-dir (Join-Path $tmpDir "cfg-pkg-windows")
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Windows QPA smoke test inside isolated windeployqt package: PASSED"
+            } else {
+              Write-Host "::notice::Windows QPA exited $LASTEXITCODE on headless CI runner; verifying packaged DLLs/QML via temporary qoffscreen.dll"
+              $qtPlugins = (& $env:QMAKE -query QT_INSTALL_PLUGINS).Trim()
+              Copy-Item (Join-Path $qtPlugins "platforms\qoffscreen.dll") (Join-Path $pkgDir "platforms\qoffscreen.dll")
+              $env:QT_QPA_PLATFORM = "offscreen"
+              & $exe --smoke-test --config-dir (Join-Path $tmpDir "cfg-pkg-offscreen")
+              if ($LASTEXITCODE -ne 0) {
+                throw "Packaged Windows offscreen smoke test failed with exit code $LASTEXITCODE"
+              }
+            }
+          } finally {
+            Pop-Location -ErrorAction SilentlyContinue
+            $env:Path = $origPath
+            if ($null -ne $origDev) { $env:RINUI_DEV_PATH = $origDev }
+            if ($null -ne $origUpstream) { $env:RINUI_UPSTREAM_DIR = $origUpstream }
+            Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
+          }
+
+      - name: Package & validate Linux distribution (offscreen + Xvfb X11)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          cp target/release/rinui-gallery "${TMP_DIR}/rinui-gallery"
+          (
+            cd "${TMP_DIR}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR QT_QPA_PLATFORM=offscreen \
+              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin-offscreen"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR xvfb-run -a env QT_QPA_PLATFORM=xcb \
+              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin-xcb"
+          )
+
+          ./scripts/package_linux.sh target/release/rinui-gallery dist/rinui-gallery-linux
+          cp -R dist/rinui-gallery-linux "${TMP_DIR}/pkg"
+          (
+            cd "${TMP_DIR}/pkg"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+              QT_QPA_PLATFORM=offscreen ./run-gallery.sh --smoke-test --config-dir "${TMP_DIR}/cfg-pkg-offscreen"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+              xvfb-run -a env QT_QPA_PLATFORM=xcb ./run-gallery.sh --smoke-test --config-dir "${TMP_DIR}/cfg-pkg-xcb"
+          )
+          rm -rf "${TMP_DIR}"
+
+      - name: Upload packaged Gallery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rinui-gallery-${{ runner.os }}
+          path: dist/
+          retention-days: 7
+
+      - name: Verify submodule remains unmodified
+        run: python3 scripts/audit_upstream.py

@@ -1,0 +1,6 @@
+/target
+/build
+/dist
+.qmlls.ini
+*.DS_Store
+**/*.rs.bk
