@@ -78,15 +78,21 @@ jobs:
       - name: Export QMAKE and Qt diagnostics
         shell: bash
         run: |
+          QT_DIR="${QT_ROOT_DIR:-${Qt6_DIR:-}}"
+          if [[ -z "${QT_DIR}" ]]; then
+            echo "error: QT_ROOT_DIR / Qt6_DIR not set by install-qt-action" >&2
+            exit 1
+          fi
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            QMAKE_BIN="${Qt6_DIR}/bin/qmake.exe"
-            echo "${Qt6_DIR}/bin" >> "${GITHUB_PATH}"
+            QT_DIR_MIXED="$(cygpath -m "${QT_DIR}")"
+            QMAKE_BIN="${QT_DIR_MIXED}/bin/qmake.exe"
+            echo "${QT_DIR}\\bin" >> "${GITHUB_PATH}"
           else
-            QMAKE_BIN="${Qt6_DIR}/bin/qmake"
+            QMAKE_BIN="${QT_DIR}/bin/qmake"
           fi
           echo "QMAKE=${QMAKE_BIN}" >> "${GITHUB_ENV}"
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
-            echo "LD_LIBRARY_PATH=${Qt6_DIR}/lib:${LD_LIBRARY_PATH:-}" >> "${GITHUB_ENV}"
+            echo "LD_LIBRARY_PATH=${QT_DIR}/lib:${LD_LIBRARY_PATH:-}" >> "${GITHUB_ENV}"
           fi
           "${QMAKE_BIN}" --version
           "${QMAKE_BIN}" -query
@@ -103,6 +109,8 @@ jobs:
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-qt-${{ matrix.qt_version }}
 
       - name: Run Clippy across workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -159,22 +167,29 @@ jobs:
           # 1. Verify isolated raw binary under offscreen QPA first
           $rawBin = Join-Path $tmpDir "rinui-gallery-raw.exe"
           Copy-Item "target\release\rinui-gallery.exe" $rawBin
+          $qtDirRaw = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
+          $qtBinClean = ($qtDirRaw -replace '/', '\').TrimEnd('\') + "\bin"
           $origPath = $env:Path
           $origDev = $env:RINUI_DEV_PATH
           $origUpstream = $env:RINUI_UPSTREAM_DIR
+          $origPluginPath = $env:QT_PLUGIN_PATH
+          $origQmlImport = $env:QML_IMPORT_PATH
+          $origQml2Import = $env:QML2_IMPORT_PATH
           try {
             Remove-Item Env:RINUI_DEV_PATH -ErrorAction SilentlyContinue
             Remove-Item Env:RINUI_UPSTREAM_DIR -ErrorAction SilentlyContinue
+            Remove-Item Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:QML_IMPORT_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:QML2_IMPORT_PATH -ErrorAction SilentlyContinue
             $env:QT_QPA_PLATFORM = "offscreen"
             & $rawBin --smoke-test --config-dir (Join-Path $tmpDir "cfg-raw-offscreen")
             if ($LASTEXITCODE -ne 0) {
               throw "Isolated Windows raw binary offscreen smoke test failed with exit code $LASTEXITCODE"
             }
 
-            # 2. Verify windeployqt package completely isolated from Qt6_DIR\bin in PATH
+            # 2. Verify windeployqt package completely isolated from QT_ROOT_DIR\bin in PATH
             $pkgDir = Join-Path $tmpDir "pkg"
             Copy-Item -Recurse -Force "dist\RinUIGallery-win64" $pkgDir
-            $qtBinClean = ($env:Qt6_DIR -replace '/', '\').TrimEnd('\') + "\bin"
             $filteredPath = ($origPath -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $qtBinClean) }) -join ';'
             $env:Path = $filteredPath
 
@@ -199,6 +214,9 @@ jobs:
             $env:Path = $origPath
             if ($null -ne $origDev) { $env:RINUI_DEV_PATH = $origDev }
             if ($null -ne $origUpstream) { $env:RINUI_UPSTREAM_DIR = $origUpstream }
+            if ($null -ne $origPluginPath) { $env:QT_PLUGIN_PATH = $origPluginPath }
+            if ($null -ne $origQmlImport) { $env:QML_IMPORT_PATH = $origQmlImport }
+            if ($null -ne $origQml2Import) { $env:QML2_IMPORT_PATH = $origQml2Import }
             Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
             Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
           }
