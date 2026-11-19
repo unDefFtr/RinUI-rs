@@ -10,7 +10,10 @@ Add `rinui-host` (and `cxx` / `cxx-qt` / `cxx-qt-lib` if defining your own `QObj
 
 ```toml
 [dependencies]
-rinui-host = { path = "../rinui-rs/crates/rinui-host" }
+# From a pinned Git pre-release tag:
+rinui-host = { git = "https://github.com/unDefFtr/rinui-rs", tag = "v0.1.0-alpha.1" }
+# Or from a local workspace checkout:
+# rinui-host = { path = "../rinui-rs/crates/rinui-host" }
 cxx = "1.0"
 cxx-qt = "0.10.0"
 cxx-qt-lib = { version = "0.10.0", features = ["qt_full"] }
@@ -18,6 +21,12 @@ cxx-qt-lib = { version = "0.10.0", features = ["qt_full"] }
 [build-dependencies]
 cxx-qt-build = "0.10.0"
 ```
+
+### Build Toolchain Prerequisites
+
+- Ensure Qt 6 includes **`qt5compat`** and **`qtshadertools`** (`Qt 6.9.3` verified in CI; `Qt 6.12.0` verified locally).
+- **Linux**: Install `lld` (or `gold` / `mold`); CXX-Qt links generated Qt resource/QML initializers with `+whole-archive`, which GNU `ld.bfd` does not support cleanly.
+- **macOS arm64 + Xcode 26 (Apple Clang 21) + Qt < 6.11.1**: Export `CXXFLAGS="-include arm_acle.h"` to work around [QTBUG-145239](https://qt-project.atlassian.net/browse/QTBUG-145239) in Qt's `qyieldcpu.h`.
 
 Because `rinui-host` sets `links = "rinui-host"` and re-exports `cxx-qt-lib` via `cxx_qt_build::Interface`, your crate's `build.rs` automatically inherits Qt module links (`Core`, `Gui`, `Qml`, `Quick`, `QuickControls2`) and RinUI's embedded QML resources when using `CxxQtBuilder`:
 
@@ -39,12 +48,15 @@ fn main() {
 
 ## 2. Minimal Host Startup
 
+Use a helper function returning `Result<i32, ...>` with `ExitCode` in `main()` (avoid calling `std::process::exit(host.exec())` directly while `RinUIHost` is still in scope, so `RinUIHost::drop` always persists configuration and runs ordered Qt teardown):
+
 ```rust
 use rinui_host::{
     AppIdentity, ConfigLocation, HostConfig, MacWindowOptions, QmlSource, ResourceMode, RinUIHost,
 };
+use std::process::ExitCode;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let config = HostConfig {
         identity: AppIdentity::new("Acme", "Goosy")
             .with_domain("goosy.example")
@@ -60,7 +72,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let loaded = host.load(&QmlSource::Url("qrc:/app/Main.qml".to_owned()))?;
     host.set_root_string_property(loaded.root_id, "title", "My App");
 
-    std::process::exit(host.exec());
+    Ok(host.exec())
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => ExitCode::from((code & 0xFF) as u8),
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 ```
 
@@ -160,3 +182,12 @@ host.set_window_customizer(Box::new(MyWindowCustomizer));
 ```
 
 If your application opens extra `FluentWindow` / `Window` objects dynamically from QML (`Qt.createComponent`), call `host.handle().sync_windows()` to register and apply native platform hooks to those new top-level windows.
+
+---
+
+## 6. Lifecycle, Thread-Affinity, and Hardening Guarantees
+
+- **Main-Thread Affinity (`!Send + !Sync`)**: Both `RinUIHost` and `HostHandle` opt out of `Send`/`Sync`. You can inspect thread affinity via `rinui_host::is_qt_main_thread()`.
+- **Single Active Host Guard**: Qt permits one `QGuiApplication` per process. Creating a second `RinUIHost` while one is active returns `Err(HostError::ApplicationAlreadyInitialized)` without touching live Qt state. Once the previous `RinUIHost` drops cleanly, sequential re-initialization succeeds.
+- **Re-Entrancy & Disposal**: `HostHandle` uses non-panicking `try_borrow`/`try_borrow_mut` guards (`Err(HostError::ReentrantCall)` on re-entrant access) and returns `Err(HostError::HostDisposed)` cleanly after `RinUIHost` is dropped.
+- **FFI Panic Safety**: All `#[qinvokable]` entry points exposed by `ThemeManager` catch unwinds at the C++ FFI boundary instead of aborting across `noexcept` boundaries.
