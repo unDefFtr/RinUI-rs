@@ -4,7 +4,10 @@
 
 #include <QGuiApplication>
 #include <QHash>
+#include <QLoggingCategory>
+#include <QMouseEvent>
 #include <QPointer>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QTimer>
 
@@ -14,8 +17,132 @@
 
 namespace {
 
+Q_LOGGING_CATEGORY(lcMacTitleBar, "rinui.mac.titlebar", QtWarningMsg)
+
+// ExpandedClientAreaHint puts the QML titlebar inside the content view. RinUI
+// disables its QML drag MouseArea in native-frame mode, so forward presses on
+// the empty titlebar to the platform move operation ourselves. Inspect the
+// complete item tree: NavigationBar's back button is outside titleBarHost.
+bool interactive_item_at(QQuickItem* item, const QPointF& scene_position)
+{
+    // MouseArea shadows QQuickItem's non-virtual enabled accessor. Its QML
+    // property must also be checked, otherwise the disabled upstream drag
+    // area is incorrectly treated as an interactive control covering the bar.
+    if (!item || !item->isVisible() || !item->isEnabled()
+        || !item->property("enabled").toBool()) {
+        return false;
+    }
+    const QPointF local = item->mapFromScene(scene_position);
+    const bool contains = item->contains(local);
+    if (item->clip() && !contains) {
+        return false;
+    }
+    for (auto* child : item->childItems()) {
+        if (interactive_item_at(child, scene_position)) {
+            return true;
+        }
+    }
+    // Qt Quick Controls' content container accepts unhandled presses to stop
+    // propagation. Its children, rather than this full-window shield, define
+    // the actual interactive regions.
+    if (item->inherits("QQuickContentItem")) {
+        return false;
+    }
+    const bool interactive = contains && (item->acceptedMouseButtons() & Qt::LeftButton);
+    if (interactive) {
+        qCDebug(lcMacTitleBar) << "Interactive titlebar item" << item;
+    }
+    return interactive;
+}
+
+class MacTitleBarInputFilter final : public QObject {
+public:
+    explicit MacTitleBarInputFilter(QQuickWindow* window)
+        : QObject(window), m_window(window)
+    {
+        window->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        auto* window = m_window.data();
+        if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick
+            || event->type() == QEvent::NonClientAreaMouseButtonPress) {
+            qCDebug(lcMacTitleBar) << "Titlebar input" << event;
+        }
+        if (!window || watched != window || !window->property("useNativeMacFrame").toBool()
+            || window->visibility() == QWindow::FullScreen) {
+            m_fallback_drag = false;
+            return false;
+        }
+
+        if (event->type() == QEvent::Hide || event->type() == QEvent::WindowDeactivate
+            || event->type() == QEvent::UngrabMouse) {
+            m_fallback_drag = false;
+        }
+        if (m_fallback_drag && event->type() == QEvent::MouseMove) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if (!(mouse->buttons() & Qt::LeftButton)) {
+                m_fallback_drag = false;
+                return false;
+            }
+            window->setPosition(m_drag_origin + (mouse->globalPosition() - m_press_position).toPoint());
+            return true;
+        }
+        if (m_fallback_drag && event->type() == QEvent::MouseButtonRelease
+            && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+            m_fallback_drag = false;
+            return true;
+        }
+        if (event->type() != QEvent::MouseButtonPress
+            && event->type() != QEvent::MouseButtonDblClick) {
+            return false;
+        }
+
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        const QPointF position = mouse->position();
+        const qreal height = window->property("titleBarHeight").toReal();
+        if (mouse->button() != Qt::LeftButton || height <= 0.0
+            || position.x() < 0.0 || position.x() >= window->width()
+            || position.y() < 0.0 || position.y() >= height
+            || interactive_item_at(window->contentItem(), position)) {
+            return false;
+        }
+
+        if (event->type() == QEvent::MouseButtonDblClick) {
+            m_fallback_drag = false;
+            if (window->property("maximizeEnabled").toBool()) {
+                if (window->visibility() == QWindow::Maximized) {
+                    window->showNormal();
+                } else {
+                    window->showMaximized();
+                }
+            }
+            return true;
+        }
+        const bool moving = window->startSystemMove();
+        qCDebug(lcMacTitleBar) << "System move requested" << moving;
+        // Some QPA/event sources cannot start a native move. Keep dragging
+        // functional using global Qt coordinates instead of swallowing it.
+        m_fallback_drag = !moving;
+        if (m_fallback_drag) {
+            m_press_position = mouse->globalPosition();
+            m_drag_origin = window->position();
+        }
+        return true;
+    }
+
+private:
+    QPointer<QQuickWindow> m_window;
+    bool m_fallback_drag = false;
+    QPointF m_press_position;
+    QPoint m_drag_origin;
+};
+
 struct MacWindowState {
     QPointer<QQuickWindow> window;
+    QPointer<QObject> input_filter;
     int offset_x = 10;
     int offset_down = 10;
     bool shift_applied = false;
@@ -268,6 +395,7 @@ void setup_window(QQuickWindow* window, bool native_mac_frame, int offset_x, int
     if (!s_mac_windows.contains(window)) {
         MacWindowState state;
         state.window = QPointer<QQuickWindow>(window);
+        state.input_filter = new MacTitleBarInputFilter(window);
         state.offset_x = offset_x;
         state.offset_down = offset_down;
         s_mac_windows.insert(window, std::move(state));
@@ -303,6 +431,7 @@ void teardown_window(QQuickWindow* window)
         return;
     }
     remove_observers(*it);
+    delete it->input_filter.data();
     s_mac_windows.erase(it);
 }
 
@@ -310,6 +439,7 @@ void teardown_all()
 {
     for (auto it = s_mac_windows.begin(); it != s_mac_windows.end(); ++it) {
         remove_observers(*it);
+        delete it->input_filter.data();
     }
     s_mac_windows.clear();
 }

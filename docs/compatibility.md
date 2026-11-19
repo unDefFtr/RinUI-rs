@@ -140,3 +140,40 @@ Verified in `RinUI/windows/FluentWindowBase.qml`, `RinUI/windows/window/Window.q
 | macOS native window (`NSWindow`) | `PyObjC` (`AppKit` + `objc`) | Objective-C++ `rinui_mac_window.mm` (ARC) | Compiled & tested locally (`Qt 6.12.0`, `Qt 6.9.3`) + `macos-latest` CI (`Qt 6.9.3`), including isolated Cocoa `.app` smoke test; interactive desktop visual QA pending. |
 | Linux X11 / Wayland | Qt `FramelessWindowHint` + `startSystemResize` | Qt `FramelessWindowHint` + `rinui_linux_window.cpp` | Compiled & tested in `ubuntu-latest` CI (`Qt 6.9.3`, `offscreen` + `xvfb-run` `xcb`); graceful `-2` return for DWM backdrops; real X11 WM & Wayland compositor visual QA pending. |
 | Standalone release without checkout | PyInstaller spec | Embedded RCC (`rinui_resources.qrc`) in binary | Tested independently outside source tree. |
+
+### macOS titlebar modes and interactive validation
+
+Upstream `FluentWindow.qml` uses a 36-point titlebar when `useNativeMacFrame` is
+enabled, and the theme's 48-point titlebar with QML traffic-light buttons when
+it is disabled. Python bundles that cannot import `AppKit` / `objc` fall back
+to the latter mode. Compare screenshots using the same frame mode and upstream
+revision; native and QML traffic lights also have different geometry. The Rust
+Gallery's `--no-native-mac-frame` option selects the QML frame explicitly.
+
+In native mode, upstream disables its titlebar drag `MouseArea`. The macOS host
+therefore installs a per-window input filter to start a system move on empty
+titlebar presses and toggle maximization on double-click. Hit testing preserves
+interactive QML controls, including the navigation back button outside the
+titlebar content host, and checks the actual QML `enabled` property because
+`MouseArea` shadows the non-virtual `QQuickItem` accessor. Qt Quick Controls'
+full-window content container is excluded from hit testing after inspecting
+its children. If the QPA rejects a system move, a global-coordinate drag
+fallback keeps the titlebar functional. The filter is removed with the
+window's native integration.
+
+Offscreen tests and startup smoke tests do not establish that native titlebar
+dragging works. Desktop validation must check actual window position changes,
+search-field input, navigation controls, double-click behavior, and both frame
+modes. Other platform-specific visual acceptance items remain open.
+
+On 2026-11-19, macOS desktop checks with Qt 6.12.0 verified titlebar movement
+from `(120, 88)` to `(20, 188)` in native-frame mode, and from `(120, 120)` to
+`(20, 220)` in QML-frame mode. Search-field typing and text selection did not
+move the window; double-click maximized and restored it. In the packaged
+Gallery, navigating to All Samples and clicking the titlebar back button
+returned to Home, and search suggestions remained functional. The automated
+native-frame drag exercised the coordinate fallback because Qt rejected the
+system-move request; physical-mouse system-move behavior remains to be checked.
+`cargo test --workspace --offline`, the upstream audit, and a post-reboot Cocoa
+bundle `--smoke-test` passed. These checks do not close the other desktop visual
+acceptance items above.
