@@ -114,8 +114,13 @@ cmake --build build --target rinui_gallery_rust
 - `--smoke-test` — verify host contracts, multi-window, theme toggle, i18n switching/fallback, and config persistence, then exit
 - `--auto-close-ms <MS>` — exit cleanly after `<MS>` milliseconds
 - `--locale <LOCALE>` — start with an explicit locale (e.g., `en_US`, `zh_CN`)
-- `--no-native-mac-frame` — disable native macOS `NSWindow` titlebar integration
+- `--native-mac-frame` — opt into native macOS `NSWindow` titlebar integration
+- `--no-native-mac-frame` — explicitly use the default QML titlebar and traffic-light controls
 - `--config-dir <DIR>` — override configuration base directory
+
+On macOS, both the Gallery and `MacWindowOptions::default()` use RinUI's
+self-drawn QML titlebar and traffic-light controls. Native titlebars require
+explicit opt-in.
 
 > **Gallery Screenshots**: Automated `offscreen`, Xvfb `xcb`, Windows QPA, and Cocoa QPA startup checks pass, while interactive desktop visual QA screenshots have not yet been captured for `v0.1.0-alpha.1`.
 

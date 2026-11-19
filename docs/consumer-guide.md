@@ -86,6 +86,21 @@ fn main() -> ExitCode {
 }
 ```
 
+### macOS Titlebar Mode
+
+`MacWindowOptions::default()` uses RinUI's self-drawn QML titlebar and
+traffic-light controls. Native Cocoa titlebar integration is opt-in:
+
+```rust
+let mac_window = MacWindowOptions {
+    enabled: true,
+    ..MacWindowOptions::default()
+};
+```
+
+The Gallery follows the same default. `--native-mac-frame` enables native
+integration, and `--no-native-mac-frame` explicitly selects the default QML mode.
+
 ### Configuration Directory Isolation
 
 `AppIdentity::new("Acme", "Goosy")` isolates configuration under:

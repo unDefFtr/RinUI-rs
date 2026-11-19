@@ -3,6 +3,9 @@ import RinUI
 
 UpstreamGallery {
     id: root
+    useNativeMacFrame: isMacOS
+        && typeof NativeMacFrameEnabled !== "undefined"
+        && NativeMacFrameEnabled
 
     Component.onCompleted: {
         var items = root.navigationItems.slice()

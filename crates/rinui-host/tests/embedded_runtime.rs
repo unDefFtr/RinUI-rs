@@ -78,6 +78,20 @@ fn main() {
     assert_eq!(callbacks.get(), 1);
     assert_eq!(host.handle().open_window_count(), 1);
 
+    if cfg!(target_os = "macos") {
+        assert_eq!(
+            host.root_property(loaded.root_id, "useNativeMacFrame")
+                .value::<bool>(),
+            Some(false),
+            "The default host must use the upstream QML titlebar"
+        );
+        assert_eq!(
+            host.root_property(loaded.root_id, "titleBarHeight")
+                .value::<i32>(),
+            Some(48)
+        );
+    }
+
     let singletons_ok = host
         .root_property(loaded.root_id, "singletonsValid")
         .value::<bool>()
@@ -211,6 +225,15 @@ fn main() {
     host.process_events();
     assert_eq!(callbacks.get(), 2);
     assert_eq!(host.handle().open_window_count(), 2);
+
+    if cfg!(target_os = "macos") {
+        assert_eq!(
+            host.root_property(secondary.root_id, "useNativeMacFrame")
+                .value::<bool>(),
+            Some(false),
+            "Secondary windows must inherit the default QML titlebar mode"
+        );
+    }
 
     host.theme_manager_mut().toggle_theme(QString::from("Dark"));
     host.process_events();

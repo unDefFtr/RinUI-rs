@@ -75,7 +75,9 @@ cargo run -p rinui-gallery
 cargo run -p rinui-gallery -- --dev
 ```
 
-常用 Gallery 参数：`--dev [PATH]`、`--smoke-test`、`--auto-close-ms <MS>`、`--locale <LOCALE>`、`--no-native-mac-frame`、`--config-dir <DIR>`。（界面截图将在桌面交互式视觉验收后补充。）
+macOS 上，Gallery 和 `MacWindowOptions::default()` 均默认使用 RinUI 的 QML 自绘标题栏与交通灯按钮。只有显式传入 `--native-mac-frame` 或设置 `MacWindowOptions { enabled: true, ..Default::default() }` 才启用原生标题栏；`--no-native-mac-frame` 保留为显式选择自绘模式的兼容参数。
+
+常用 Gallery 参数：`--dev [PATH]`、`--smoke-test`、`--auto-close-ms <MS>`、`--locale <LOCALE>`、`--native-mac-frame`、`--no-native-mac-frame`、`--config-dir <DIR>`。（界面截图将在桌面交互式视觉验收后补充。）
 
 ### 4. 发布打包
 

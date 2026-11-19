@@ -31,7 +31,8 @@ pub struct LoadedRoot {
 /// Configuration for native macOS `NSWindow` titlebar integration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MacWindowOptions {
-    /// Enable Cocoa `NSWindowStyleMaskFullSizeContentView` + transparent titlebar integration.
+    /// Opt into Cocoa `NSWindowStyleMaskFullSizeContentView` + transparent titlebar integration.
+    /// Defaults to `false`, using RinUI's QML titlebar and traffic-light controls.
     pub enabled: bool,
     /// Horizontal offset applied to native traffic lights (points).
     pub traffic_lights_offset_x: i32,
@@ -42,7 +43,7 @@ pub struct MacWindowOptions {
 impl Default for MacWindowOptions {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             traffic_lights_offset_x: 10,
             traffic_lights_offset_down: 10,
         }

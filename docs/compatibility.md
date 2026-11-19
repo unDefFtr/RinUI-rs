@@ -147,8 +147,21 @@ Upstream `FluentWindow.qml` uses a 36-point titlebar when `useNativeMacFrame` is
 enabled, and the theme's 48-point titlebar with QML traffic-light buttons when
 it is disabled. Python bundles that cannot import `AppKit` / `objc` fall back
 to the latter mode. Compare screenshots using the same frame mode and upstream
-revision; native and QML traffic lights also have different geometry. The Rust
-Gallery's `--no-native-mac-frame` option selects the QML frame explicitly.
+revision; native and QML traffic lights also have different geometry.
+
+The Rust host and Gallery default to the self-drawn QML frame and traffic-light
+controls, matching the Python Gallery's QML-frame behavior. `MacWindowOptions::default()`
+sets `enabled` to `false`; consumers must set it to `true` to opt into the native
+frame. Gallery users can opt in with `--native-mac-frame`.
+`--no-native-mac-frame` remains supported to explicitly select the default QML
+frame; if both flags are supplied, the last one wins. Upstream files remain
+unmodified.
+
+Default-mode regression checks cover both primary and secondary host windows.
+Gallery smoke tests assert `useNativeMacFrame == false` and a 48-point titlebar
+by default, or `true` and 36 points after explicit native opt-in. On 2026-11-19,
+the full offline workspace test suite and packaged Cocoa smoke tests for the
+default, native opt-in, and legacy self-drawn override all passed.
 
 In native mode, upstream disables its titlebar drag `MouseArea`. The macOS host
 therefore installs a per-window input filter to start a system move on empty

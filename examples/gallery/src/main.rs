@@ -20,7 +20,7 @@ struct CliOptions {
     smoke_test: bool,
     auto_close_ms: Option<i32>,
     locale: Option<String>,
-    no_native_mac_frame: bool,
+    native_mac_frame: bool,
     config_dir: Option<PathBuf>,
 }
 
@@ -31,7 +31,7 @@ fn parse_args() -> Result<CliOptions, String> {
         smoke_test: false,
         auto_close_ms: None,
         locale: None,
-        no_native_mac_frame: false,
+        native_mac_frame: MacWindowOptions::default().enabled,
         config_dir: None,
     };
 
@@ -49,8 +49,11 @@ fn parse_args() -> Result<CliOptions, String> {
             "--smoke-test" => {
                 opts.smoke_test = true;
             }
+            "--native-mac-frame" => {
+                opts.native_mac_frame = true;
+            }
             "--no-native-mac-frame" => {
-                opts.no_native_mac_frame = true;
+                opts.native_mac_frame = false;
             }
             "--auto-close-ms" => {
                 let raw = args
@@ -81,7 +84,8 @@ fn parse_args() -> Result<CliOptions, String> {
                      --smoke-test             Validate host contracts, multi-window, theme, i18n, and exit\n  \
                      --auto-close-ms <MS>     Quit cleanly after <MS> milliseconds\n  \
                      --locale <LOCALE>        Start with explicit locale (e.g. en_US, zh_CN)\n  \
-                     --no-native-mac-frame    Disable native macOS NSWindow titlebar integration\n  \
+                     --native-mac-frame       Opt into native macOS NSWindow titlebar integration\n  \
+                     --no-native-mac-frame    Use the default QML titlebar and traffic-light controls\n  \
                      --config-dir <DIR>       Override configuration base directory"
                 );
                 std::process::exit(0);
@@ -147,7 +151,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         config_location: config_location.clone(),
         locale: opts.locale.clone(),
         mac_window: MacWindowOptions {
-            enabled: !opts.no_native_mac_frame,
+            enabled: opts.native_mac_frame,
             ..MacWindowOptions::default()
         },
         qt_quick_controls_style: "Basic".to_owned(),
@@ -203,6 +207,12 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     backend_pin.attach_context(host.handle(), Rc::clone(&gallery_cfg), dev_lang_dir);
     host.expose_qobject("Backend", backend)?;
 
+    // Select the frame before QML creates the window, including its first visible frame.
+    host.set_context_property_variant(
+        "NativeMacFrameEnabled",
+        &rinui_host::cxx_qt_lib::QVariant::from(&opts.native_mac_frame),
+    )?;
+
     let main_source = QmlSource::Url("qrc:/gallery/GalleryMain.qml".to_owned());
     let loaded = host.load(&main_source)?;
     host.set_icon(
@@ -218,7 +228,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     );
 
     if opts.smoke_test {
-        run_smoke_assertions(&mut host, loaded.root_id)?;
+        run_smoke_assertions(&mut host, loaded.root_id, opts.native_mac_frame)?;
         return Ok(0);
     }
 
@@ -232,6 +242,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
 fn run_smoke_assertions(
     host: &mut RinUIHost,
     main_root_id: rinui_host::RootId,
+    native_mac_frame: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     host.process_events();
     assert!(host.is_root_alive(main_root_id));
@@ -239,6 +250,21 @@ fn run_smoke_assertions(
         host.handle().open_window_count() >= 1,
         "Gallery main window should be registered"
     );
+
+    if cfg!(target_os = "macos") {
+        assert_eq!(
+            host.root_property(main_root_id, "useNativeMacFrame")
+                .value::<bool>(),
+            Some(native_mac_frame),
+            "Gallery must honor the selected macOS titlebar mode"
+        );
+        assert_eq!(
+            host.root_property(main_root_id, "titleBarHeight")
+                .value::<i32>(),
+            Some(if native_mac_frame { 36 } else { 48 }),
+            "Gallery must use the upstream titlebar height for the selected mode"
+        );
+    }
 
     // Theme switching & persistence
     let prev_theme = host.theme_manager().get_theme_name().to_string();
