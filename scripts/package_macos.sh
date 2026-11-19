@@ -198,19 +198,28 @@ relocate_external_deps() {
 }
 
 # Remove optional/unrelated Qt plugins whose @rpath frameworks were not deployed by macdeployqt
-# (e.g. QtPdf, Qt3D, QtVirtualKeyboard, QtQuickTimeline, QtStateMachine) so dyld cannot fall back
-# to external system Qt installations.
+# or whose host-only dylibs are unavailable (e.g. QtPdf, Qt3D, QtVirtualKeyboard, sqldrivers) so
+# dyld cannot fall back to external system Qt installations.
 if [[ -d "${PLUGINS_DIR}" ]]; then
     while IFS= read -r -d '' plugin_bin; do
         missing_ref=""
         while IFS= read -r ref; do
             [[ -z "${ref}" ]] && continue
-            rel="${ref#@rpath/}"
-            if [[ ! -e "${FRAMEWORKS_DIR}/${rel}" ]]; then
-                missing_ref="${ref}"
-                break
+            if [[ "${ref}" == @rpath/* ]]; then
+                rel="${ref#@rpath/}"
+                if [[ ! -e "${FRAMEWORKS_DIR}/${rel}" ]]; then
+                    missing_ref="${ref}"
+                    break
+                fi
+            elif [[ "${ref}" == /opt/homebrew/* || "${ref}" == /usr/local/* || "${ref}" == /Users/* ]]; then
+                # Optional Qt plugins (e.g. sqldrivers) may reference host-only
+                # libraries; prune them if the external dylib cannot be bundled.
+                if [[ ! -e "${ref}" ]]; then
+                    missing_ref="${ref}"
+                    break
+                fi
             fi
-        done < <(list_load_dylibs "${plugin_bin}" | grep '^@rpath/' || true)
+        done < <(list_load_dylibs "${plugin_bin}" | grep -E '^(@rpath/|/opt/homebrew/|/usr/local/|/Users/)' || true)
 
         if [[ -n "${missing_ref}" ]]; then
             if is_required_plugin "${plugin_bin}"; then

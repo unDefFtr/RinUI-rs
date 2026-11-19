@@ -60,9 +60,11 @@ impl WindowsVersion {
     /// Query the real Windows version using `RtlGetVersion` (unaffected by manifest shims).
     #[cfg(target_os = "windows")]
     pub fn detect() -> Option<Self> {
+        // Win32 `OSVERSIONINFOW` binary layout (fields intentionally kept in
+        // Win32 order/names so `size_of` and offsets match the API contract).
         #[repr(C)]
         #[allow(non_snake_case)]
-        struct OSVERSIONINFOW {
+        struct OsVersionInfoW {
             dwOSVersionInfoSize: u32,
             dwMajorVersion: u32,
             dwMinorVersion: u32,
@@ -71,14 +73,17 @@ impl WindowsVersion {
             szCSDVersion: [u16; 128],
         }
 
-        type RtlGetVersionFn = unsafe extern "system" fn(*mut OSVERSIONINFOW) -> i32;
+        // `sizeof(OSVERSIONINFOW)`: 5 x DWORD + WCHAR[128] = 276 bytes.
+        const _: () = assert!(std::mem::size_of::<OsVersionInfoW>() == 276);
+
+        type RtlGetVersionFn = unsafe extern "system" fn(*mut OsVersionInfoW) -> i32;
 
         #[link(name = "kernel32")]
         extern "system" {
             fn GetModuleHandleW(lp_module_name: *const u16) -> *mut core::ffi::c_void;
             fn GetProcAddress(
                 h_module: *mut core::ffi::c_void,
-                lp_proc_name: *const u8,
+                lp_proc_name: *const core::ffi::c_char,
             ) -> *const core::ffi::c_void;
         }
 
@@ -101,14 +106,14 @@ impl WindowsVersion {
             if module.is_null() {
                 return None;
             }
-            let proc = GetProcAddress(module, b"RtlGetVersion\0".as_ptr());
+            let proc = GetProcAddress(module, c"RtlGetVersion".as_ptr());
             if proc.is_null() {
                 return None;
             }
             let rtl_get_version =
                 std::mem::transmute::<*const core::ffi::c_void, RtlGetVersionFn>(proc);
-            let mut info: OSVERSIONINFOW = std::mem::zeroed();
-            info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
+            let mut info: OsVersionInfoW = std::mem::zeroed();
+            info.dwOSVersionInfoSize = std::mem::size_of::<OsVersionInfoW>() as u32;
             if rtl_get_version(&mut info) == 0 {
                 Some(Self {
                     major: info.dwMajorVersion,

@@ -54,9 +54,9 @@ git submodule update --init --recursive
 
 ### 2. Prerequisites
 
-- **macOS**: Xcode Command Line Tools, Rust (`rustup`), Qt 6 with `qt5compat` (e.g. `brew install qt` — ensure `qmake6` is in `PATH` or set `QMAKE=/path/to/qmake6`).
-- **Windows**: MSVC Build Tools 2022, Rust (`msvc` toolchain), Qt 6 (`6.9+` with `Qt 5 Compatibility Module`), `qmake` in `PATH` or `QMAKE` set.
-- **Linux**: GCC/Clang, Mesa/X11/Wayland dev packages, Rust, Qt 6 with `qt5compat`, `qmake6`/`qmake` in `PATH`.
+- **macOS**: Xcode Command Line Tools, Rust (`rustup`), Qt 6 with `qt5compat` and `qtshadertools` (e.g. `brew install qt` — ensure `qmake6` is in `PATH` or set `QMAKE=/path/to/qmake6`). On Apple Silicon with Xcode 26 (Apple Clang 21) and Qt < 6.11.1, export `CXXFLAGS="-include arm_acle.h"` to work around [QTBUG-145239](https://qt-project.atlassian.net/browse/QTBUG-145239) in Qt's `qyieldcpu.h`.
+- **Windows**: MSVC Build Tools 2022, Rust (`msvc` toolchain), Qt 6 (`6.9+` with `Qt 5 Compatibility Module` and `Qt Shader Tools`), `qmake` in `PATH` or `QMAKE` set.
+- **Linux**: GCC/Clang, Mesa/X11/Wayland dev packages, Rust, Qt 6 with `qt5compat` + `qtshadertools`, `qmake6`/`qmake` in `PATH`, and `lld` (or `gold`/`mold`) in `PATH`. CXX-Qt links generated Qt resource/QML initializers with `+whole-archive`; GNU `ld.bfd` does not link Cargo binaries correctly, so `cxx-qt-build` selects `lld` automatically when available.
 
 ### 3. Build, Test, and Run the Gallery
 

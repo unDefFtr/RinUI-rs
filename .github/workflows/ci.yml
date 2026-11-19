@@ -39,15 +39,15 @@ jobs:
           - os: macos-latest
             qt_version: "6.9.3"
             qt_arch: clang_64
-            qt_modules: "qt5compat"
+            qt_modules: "qt5compat qtshadertools"
           - os: windows-latest
             qt_version: "6.9.3"
             qt_arch: win64_msvc2022_64
-            qt_modules: "qt5compat"
+            qt_modules: "qt5compat qtshadertools"
           - os: ubuntu-latest
             qt_version: "6.9.3"
             qt_arch: linux_gcc_64
-            qt_modules: "qt5compat"
+            qt_modules: "qt5compat qtshadertools"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +58,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # CXX-Qt requires a non-bfd linker for Cargo-linked executables/tests:
+          # the generated Qt resource and QML plugin initializers are linked via
+          # `+whole-archive`, which GNU ld.bfd does not handle correctly.
           sudo apt-get install -y \
+            lld \
             libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype6-dev libx11-dev libx11-xcb-dev \
             libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 \
@@ -96,6 +100,10 @@ jobs:
           fi
           "${QMAKE_BIN}" --version
           "${QMAKE_BIN}" -query
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            ld --version | head -n 1
+            lld --version
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -106,6 +114,24 @@ jobs:
         run: |
           rustc --version
           cargo --version
+
+      - name: Work around Qt 6.9.3 ARM64 __yield Clang 21 incompatibility
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Qt 6.9.x's qyieldcpu.h calls the ACLE __yield() intrinsic behind
+          # __has_builtin(__yield) without including <arm_acle.h>. Apple Clang 21
+          # (Xcode 26) header-gates that declaration, so every C++ TU that pulls
+          # in <QtCore/qatomic.h> fails with -Wimplicit-function-declaration.
+          # QTBUG-145239 was fixed for Qt 6.11.1/6.12; force-include the ACLE
+          # header for cc-rs (including cxx-qt's own C++ sources) until the
+          # pinned Qt 6.9.3 toolchain is upgraded.
+          if [[ "$(uname -m)" == "arm64" ]]; then
+            echo "CXXFLAGS=${CXXFLAGS:+$CXXFLAGS }-include arm_acle.h" >> "${GITHUB_ENV}"
+            echo "Applied <arm_acle.h> force-include for arm64 macOS"
+          else
+            echo "Skipping <arm_acle.h> workaround on $(uname -m)"
+          fi
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2

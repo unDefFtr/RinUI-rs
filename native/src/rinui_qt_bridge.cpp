@@ -517,6 +517,20 @@ void rinui_engine_collect_garbage(QQmlApplicationEngine& engine)
     engine.collectGarbage();
 }
 
+namespace {
+
+// Qt 6.9.x returns false from QCoreApplication::installTranslator() for an
+// empty catalog even though the translator is installed (Qt >= 6.10 returns
+// true). An empty catalog is a valid no-op: upstream RinUI's en_US.qm is
+// header-only because English source strings require no translation.
+bool install_translator_or_empty(QTranslator* translator)
+{
+    const bool installed = QCoreApplication::installTranslator(translator);
+    return installed || translator->isEmpty();
+}
+
+} // namespace
+
 bool rinui_translator_load_rinui(const QString& qm_path, const QString& locale_name)
 {
     QCoreApplication* app = QCoreApplication::instance();
@@ -534,7 +548,7 @@ bool rinui_translator_load_rinui(const QString& qm_path, const QString& locale_n
         QCoreApplication::removeTranslator(previous.get());
     }
 
-    if (!QCoreApplication::installTranslator(next.get())) {
+    if (!install_translator_or_empty(next.get())) {
         if (previous) {
             QCoreApplication::installTranslator(previous.get());
             s_rinui_translator = std::move(previous);
@@ -569,7 +583,7 @@ bool rinui_translator_load_app(const QString& catalog_id, const QString& qm_path
         s_app_translators.erase(it);
     }
 
-    if (!QCoreApplication::installTranslator(next.get())) {
+    if (!install_translator_or_empty(next.get())) {
         if (previous) {
             QCoreApplication::installTranslator(previous.get());
             s_app_translators.emplace(key, std::move(previous));
