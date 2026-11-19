@@ -101,8 +101,8 @@ jobs:
           "${QMAKE_BIN}" --version
           "${QMAKE_BIN}" -query
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
-            ld --version | head -n 1
-            lld --version
+            ld --version
+            ld.lld --version
           fi
 
       - name: Install Rust toolchain
