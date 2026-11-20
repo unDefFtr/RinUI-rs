@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Windows toolchain
+- Move the Windows CI/package baseline from Qt 6.9.3 to Qt 6.10.3 for the
+  Windows 10 Gallery white-border investigation. The local build and native
+  smoke test pass, and the user confirmed no white borders in the upgraded
+  window. Transition visual checks and one resource-cleanup regression
+  remain open. See [validation details](docs/windows-10-border.md).
+
 Upstream parity completion across `rinui-rs` (`upstream/Rin-UI` unchanged at `46d77fa8371ff0e9f46a10a2eb66612dab123269`).
 
 ### Added

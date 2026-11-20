@@ -33,13 +33,13 @@
 | Rust 工具链 | CI：`rustc 1.100.0`；本地 macOS：`rustc 1.97.1`（MSRV `1.85`） |
 | `cxx-qt` / `cxx-qt-lib` / `cxx-qt-build` / `qt-build-utils` | `0.10.0` |
 | `cxx` | `1.0` |
-| Qt 6 | CI：`Qt 6.9.3`（macOS arm64、Windows MSVC、Ubuntu GCC+`lld`）；本地 macOS：`Qt 6.12.0` & `6.9.3`（需 `Qt5Compat` 与 `QtShaderTools`） |
+| Qt 6 | CI：Windows MSVC 使用 `Qt 6.10.3`，macOS arm64、Ubuntu GCC+`lld` 使用 `6.9.3`；本地 macOS：`Qt 6.12.0` & `6.9.3`（需 `Qt5Compat` 与 `QtShaderTools`） |
 | CMake | `>= 3.24`（本地验证 `4.4.0`） |
 
 | 平台 | 已实现 | Parity 改动后本地验证 | CI / 物理桌面与签名状态 |
 |---|---|---|---|
 | **macOS (arm64)** | 是 | 是（`Qt 6.12.0`：`audit_upstream.py`、`cargo test --workspace`、`qt-widgets-test`、`engine_config_demo`、隔离 `.app` 严格 Cocoa QPA 双模式冒烟） | 基线 `alpha.1` CI 曾通过 `Qt 6.9.3`；最新交互式视觉/全屏回归与 Developer ID 签名/公证尚未执行 |
-| **Windows (x64 MSVC)** | 是 | macOS 主机无 Windows 工具链（已实现 `package_windows.ps1` 与无 Python `package_msix.ps1`） | 基线 `alpha.1` CI 曾通过；Parity 改动后 Windows CI（严格 `windows` QPA + unsigned MSIX 解包）、MSIX 安装启动、Authenticode 签名与 Win10/11 实机验收待执行 |
+| **Windows (x64 MSVC)** | 是 | Win10 19045 + Qt `6.10.3`：构建、目录打包与原生冒烟通过，用户确认窗口无白边；一项资源目录清理断言失败（[详情](docs/windows-10-border.md)） | 基线 `alpha.1` CI 曾通过 `6.9.3`；新版 CI、窗口状态切换视觉回归、MSIX 安装启动及签名仍待验证 |
 | **Linux (x64 GCC + `lld`)** | 是 | macOS 主机无 Linux 目标环境（已更新严格分层 CI 与 `xvfb-xcb` 标注） | 基线 `alpha.1` CI 曾通过 headless `xvfb-xcb`；Parity 改动后 Linux CI、真实 X11 WM 及原生 Wayland 合成器实机验收待执行 |
 
 *(资源文件收录率与 `--smoke-test` 验证初始化、导航与核心路径，不等同于全部控件的桌面人工 UI 验收。)*
@@ -58,7 +58,7 @@ cd rinui-rs
 ### 2. 环境依赖
 
 - **macOS**：Xcode Command Line Tools、Rust（`rustup`）、带 `qt5compat` 与 `qtshadertools` 的 Qt 6（如 `brew install qt`，确保 `qmake6` 在 `PATH` 或设置 `QMAKE=/path/to/qmake6`）。Apple Silicon + Xcode 26（Apple Clang 21）搭配 Qt `< 6.11.1` 时，需设置 `CXXFLAGS="-include arm_acle.h"` 以规避 Qt `qyieldcpu.h` 的 [QTBUG-145239](https://qt-project.atlassian.net/browse/QTBUG-145239)。
-- **Windows**：MSVC Build Tools 2022、Rust（`msvc` 工具链）、Qt 6（`6.9+`，含 `Qt 5 Compatibility Module` 与 `Qt Shader Tools`），确保 `qmake` 在 `PATH` 或设置 `QMAKE`。
+- **Windows**：MSVC Build Tools 2022、Rust（`msvc` 工具链）、Qt `6.10.3`（Windows 构建与打包基线，含 `Qt 5 Compatibility Module` 与 `Qt Shader Tools`），确保 `qmake` 在 `PATH` 或设置 `QMAKE`。本次白边排查的验证范围见[测试记录](docs/windows-10-border.md)。
 - **Linux**：GCC/Clang、Mesa/X11/Wayland 开发包、Rust、带 `qt5compat` + `qtshadertools` 的 Qt 6、`qmake6`/`qmake`，以及 `lld`（或 `gold`/`mold`）。CXX-Qt 链接生成的 QRC / QML 初始化器时依赖 `+whole-archive`，GNU `ld.bfd` 无法正确链接，`cxx-qt-build` 会自动优先选用 `lld`。
 
 ### 3. 审计、测试与运行 Gallery

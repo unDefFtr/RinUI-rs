@@ -35,7 +35,7 @@ Independent, reusable Rust + C++/Objective-C++ Qt 6 host library for the upstrea
 | Rust Toolchain | CI: `rustc 1.100.0`; Local macOS: `rustc 1.97.1` (MSRV `1.85`) |
 | `cxx-qt` / `cxx-qt-lib` / `cxx-qt-build` / `qt-build-utils` | `0.10.0` |
 | `cxx` | `1.0` |
-| Qt 6 | CI: Qt `6.9.3` (macOS arm64, Windows MSVC, Ubuntu GCC+`lld`); Local macOS: `6.12.0` & `6.9.3` (`>= 6.8` in CMake) with `Qt5Compat` & `QtShaderTools` |
+| Qt 6 | CI: Qt `6.10.3` (Windows MSVC), `6.9.3` (macOS arm64, Ubuntu GCC+`lld`); Local macOS: `6.12.0` & `6.9.3` (`>= 6.8` in CMake) with `Qt5Compat` & `QtShaderTools` |
 | CMake | `>= 3.24` (verified locally on `4.4.0`) |
 
 ### Platform Verification Status
@@ -43,7 +43,7 @@ Independent, reusable Rust + C++/Objective-C++ Qt 6 host library for the upstrea
 | Platform | Implemented | Post-Parity Local Verification | CI / Physical Desktop & Signing Status |
 |---|---|---|---|
 | **macOS (arm64)** | Yes | Yes (`Qt 6.12.0`: `audit_upstream.py`, `cargo test --workspace`, `qt-widgets-test`, `engine_config_demo`, isolated `.app` strict Cocoa QPA in default & `--upstream-mac-frame` modes) | Prior `alpha.1` baseline CI passed on `Qt 6.9.3`; interactive post-parity visual/fullscreen QA & Developer ID signing/notarization not yet run |
-| **Windows (x64 MSVC)** | Yes | N/A on macOS host (`scripts/package_windows.ps1`, `scripts/package_msix.ps1` + `packaging/windows/` implemented) | Prior `alpha.1` baseline CI passed on `Qt 6.9.3`; post-parity CI (`windows` QPA + unsigned MSIX unpack), MSIX install/launch, Authenticode signing, and Win10/11 desktop QA pending Windows runner/desktop |
+| **Windows (x64 MSVC)** | Yes | Win10 19045 + Qt `6.10.3`: build, directory packaging and native smoke test pass; user confirms no white borders; one resource-cleanup assertion fails ([details](docs/windows-10-border.md)) | Prior `alpha.1` CI passed on `6.9.3`; updated CI, transition visual checks, MSIX install/launch and signing remain pending |
 | **Linux (x64 GCC + `lld`)** | Yes | N/A on macOS host (`scripts/package_linux.sh`) | Prior `alpha.1` baseline CI passed headless `xvfb-xcb`; post-parity Linux CI, real X11 WM, and native Wayland compositor QA pending Linux runner/desktop |
 
 *(Source-resource coverage of RinUI's runtime tree and automated `--smoke-test` checks establish resource loading, startup, frame mode selection, NavigationView/ErrorPage/ScrollView behavior, theme toggle, multi-window, and i18n, rather than replacing full manual GUI QA of every upstream control.)*
@@ -68,7 +68,7 @@ git submodule update --init --recursive
 ### 2. Prerequisites
 
 - **macOS**: Xcode Command Line Tools, Rust (`rustup`), Qt 6 with `qt5compat` and `qtshadertools` (e.g. `brew install qt` — ensure `qmake6` is in `PATH` or set `QMAKE=/path/to/qmake6`). On Apple Silicon with Xcode 26 (Apple Clang 21) and Qt < 6.11.1, export `CXXFLAGS="-include arm_acle.h"` to work around [QTBUG-145239](https://qt-project.atlassian.net/browse/QTBUG-145239) in Qt's `qyieldcpu.h`.
-- **Windows**: MSVC Build Tools 2022, Rust (`msvc` toolchain), Qt 6 (`6.9+` with `Qt 5 Compatibility Module` and `Qt Shader Tools`), `qmake` in `PATH` or `QMAKE` set.
+- **Windows**: MSVC Build Tools 2022, Rust (`msvc` toolchain), Qt `6.10.3` (Windows build/package baseline, with `Qt 5 Compatibility Module` and `Qt Shader Tools`), `qmake` in `PATH` or `QMAKE` set. See [Windows 10 border investigation](docs/windows-10-border.md) for the validation scope.
 - **Linux**: GCC/Clang, Mesa/X11/Wayland dev packages, Rust, Qt 6 with `qt5compat` + `qtshadertools`, `qmake6`/`qmake` in `PATH`, and `lld` (or `gold`/`mold`) in `PATH`. CXX-Qt links generated Qt resource/QML initializers with `+whole-archive`; GNU `ld.bfd` does not link Cargo binaries correctly, so `cxx-qt-build` selects `lld` automatically when available.
 
 ### 3. Build, Test, and Run the Gallery
