@@ -1,8 +1,108 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BINARY_PATH="${1:-target/release/rinui-gallery}"
-OUTPUT_DIR="${2:-dist}"
+usage() {
+    cat <<'EOF'
+Usage: scripts/package_macos.sh [OPTIONS] [BINARY_PATH] [OUTPUT_DIR]
+
+Packages rinui-gallery into a self-contained RinUIGallery.app bundle.
+By default, applies ad-hoc local code signing (`codesign --sign -`).
+
+Options:
+  --binary <PATH>           Path to release binary (default: target/release/rinui-gallery)
+  --output <DIR>            Output directory for .app (default: dist)
+  --sign-identity <ID>      Developer ID Application identity (env: RINUI_MACOS_SIGN_IDENTITY)
+  --entitlements <PLIST>    Entitlements plist when signing (env: RINUI_MACOS_ENTITLEMENTS)
+  --notarize                Submit .app via `xcrun notarytool` & staple (env: RINUI_MACOS_NOTARIZE=1)
+  --notary-profile <NAME>   Keychain profile for `xcrun notarytool` (env: RINUI_MACOS_NOTARY_PROFILE)
+  -h, --help                Show this help message
+EOF
+}
+
+BINARY_PATH=""
+OUTPUT_DIR=""
+SIGN_IDENTITY="${RINUI_MACOS_SIGN_IDENTITY:-}"
+ENTITLEMENTS="${RINUI_MACOS_ENTITLEMENTS:-}"
+NOTARY_PROFILE="${RINUI_MACOS_NOTARY_PROFILE:-}"
+NOTARIZE=0
+if [[ "${RINUI_MACOS_NOTARIZE:-0}" == "1" || "${RINUI_MACOS_NOTARIZE:-}" == "true" ]]; then
+    NOTARIZE=1
+fi
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --binary)
+            [[ $# -ge 2 ]] || { echo "error: --binary requires a path" >&2; exit 1; }
+            BINARY_PATH="$2"
+            shift 2
+            ;;
+        --output)
+            [[ $# -ge 2 ]] || { echo "error: --output requires a directory" >&2; exit 1; }
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --sign-identity)
+            [[ $# -ge 2 ]] || { echo "error: --sign-identity requires an identity string" >&2; exit 1; }
+            SIGN_IDENTITY="$2"
+            shift 2
+            ;;
+        --entitlements)
+            [[ $# -ge 2 ]] || { echo "error: --entitlements requires a plist path" >&2; exit 1; }
+            ENTITLEMENTS="$2"
+            shift 2
+            ;;
+        --notarize)
+            NOTARIZE=1
+            shift
+            ;;
+        --notary-profile)
+            [[ $# -ge 2 ]] || { echo "error: --notary-profile requires a profile name" >&2; exit 1; }
+            NOTARY_PROFILE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "error: unknown option '$1' (try --help)" >&2
+            exit 1
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "${BINARY_PATH}" && ${#POSITIONAL[@]} -ge 1 ]]; then
+    BINARY_PATH="${POSITIONAL[0]}"
+fi
+if [[ -z "${OUTPUT_DIR}" && ${#POSITIONAL[@]} -ge 2 ]]; then
+    OUTPUT_DIR="${POSITIONAL[1]}"
+fi
+if [[ ${#POSITIONAL[@]} -gt 2 ]]; then
+    echo "error: unexpected positional arguments (try --help)" >&2
+    exit 1
+fi
+
+BINARY_PATH="${BINARY_PATH:-target/release/rinui-gallery}"
+OUTPUT_DIR="${OUTPUT_DIR:-dist}"
+
+if [[ -n "${ENTITLEMENTS}" && ! -f "${ENTITLEMENTS}" ]]; then
+    echo "error: entitlements file not found at ${ENTITLEMENTS}" >&2
+    exit 1
+fi
+if [[ "${NOTARIZE}" -eq 1 && -z "${SIGN_IDENTITY}" ]]; then
+    echo "error: --notarize requires --sign-identity or RINUI_MACOS_SIGN_IDENTITY" >&2
+    exit 1
+fi
+if [[ "${NOTARIZE}" -eq 1 && -z "${NOTARY_PROFILE}" ]]; then
+    echo "error: --notarize requires --notary-profile or RINUI_MACOS_NOTARY_PROFILE" >&2
+    exit 1
+fi
+
 APP_NAME="RinUIGallery"
 BUNDLE_DIR="${OUTPUT_DIR}/${APP_NAME}.app"
 CONTENTS_DIR="${BUNDLE_DIR}/Contents"
@@ -261,10 +361,38 @@ for _pass in 1 2 3; do
     fi
 done
 
-# Restore ad-hoc Mach-O signature after install_name_tool edits (local execution only;
-# NOT Developer ID signed or notarized).
-if command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign - "${BUNDLE_DIR}"
+# Code signing: ad-hoc by default; Developer ID + Hardened Runtime when configured.
+if [[ -n "${SIGN_IDENTITY}" ]]; then
+    if ! command -v codesign >/dev/null 2>&1; then
+        echo "error: codesign tool not found" >&2
+        exit 1
+    fi
+    MAIN_EXE="${MACOS_DIR}/${APP_NAME}"
+    while IFS= read -r -d '' mach_bin; do
+        if [[ "${mach_bin}" == "${MAIN_EXE}" ]]; then
+            continue
+        fi
+        codesign --force --sign "${SIGN_IDENTITY}" --options runtime --timestamp "${mach_bin}"
+    done < <(list_macho_binaries)
+
+    if [[ -d "${FRAMEWORKS_DIR}" ]]; then
+        while IFS= read -r -d '' fw_dir; do
+            codesign --force --sign "${SIGN_IDENTITY}" --options runtime --timestamp "${fw_dir}"
+        done < <(find "${FRAMEWORKS_DIR}" -maxdepth 1 -type d -name "*.framework" -print0)
+    fi
+
+    APP_SIGN_ARGS=(--force --sign "${SIGN_IDENTITY}" --options runtime --timestamp)
+    if [[ -n "${ENTITLEMENTS}" ]]; then
+        APP_SIGN_ARGS+=(--entitlements "${ENTITLEMENTS}")
+    fi
+    codesign "${APP_SIGN_ARGS[@]}" "${BUNDLE_DIR}"
+    codesign --verify --deep --strict --verbose=2 "${BUNDLE_DIR}"
+else
+    # Restore ad-hoc Mach-O signature after install_name_tool edits (local execution only;
+    # NOT Developer ID signed or notarized).
+    if command -v codesign >/dev/null 2>&1; then
+        codesign --force --deep --sign - "${BUNDLE_DIR}"
+    fi
 fi
 
 # Verify self-contained bundle structure, rpaths, and load commands.
@@ -310,4 +438,18 @@ while IFS= read -r -d '' mach_bin; do
     done < <(list_load_dylibs "${mach_bin}" | grep '^@rpath/' || true)
 done < <(list_macho_binaries)
 
-echo "Packaged macOS bundle at ${BUNDLE_DIR} (ad-hoc local signature; not notarized)"
+if [[ -n "${SIGN_IDENTITY}" && "${NOTARIZE}" -eq 1 ]]; then
+    NOTARY_ZIP="$(mktemp -u "${TMPDIR:-/tmp}/RinUIGallery-notarize.XXXXXX").zip"
+    trap 'rm -f "${NOTARY_ZIP}"' EXIT
+    ditto -c -k --keepParent "${BUNDLE_DIR}" "${NOTARY_ZIP}"
+    xcrun notarytool submit "${NOTARY_ZIP}" --keychain-profile "${NOTARY_PROFILE}" --wait
+    rm -f "${NOTARY_ZIP}"
+    trap - EXIT
+    xcrun stapler staple "${BUNDLE_DIR}"
+    xcrun stapler validate "${BUNDLE_DIR}"
+    echo "Packaged, Developer ID signed, and notarized macOS bundle at ${BUNDLE_DIR}"
+elif [[ -n "${SIGN_IDENTITY}" ]]; then
+    echo "Packaged and Developer ID signed macOS bundle at ${BUNDLE_DIR} (notarization skipped; pass --notarize --notary-profile <profile> to notarize)"
+else
+    echo "Packaged macOS bundle at ${BUNDLE_DIR} (ad-hoc local signature; Developer ID signing/notarization NOT performed)"
+fi

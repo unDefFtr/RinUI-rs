@@ -139,17 +139,22 @@ jobs:
           key: ${{ matrix.os }}-qt-${{ matrix.qt_version }}
 
       - name: Run Clippy across workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p rinui-host --features qt-widgets-test --all-targets -- -D warnings
 
-      - name: Run workspace unit and integration tests (offscreen)
+      - name: Layer 1 - Run offscreen unit, integration, and example checks
         env:
           QT_QPA_PLATFORM: offscreen
-        run: cargo test --workspace
+        run: |
+          cargo test --workspace
+          cargo test -p rinui-host --features qt-widgets-test --test external_qapplication
+          cargo run -p rinui-host --example engine_config_demo
 
       - name: Build release rinui-gallery
         run: cargo build --release -p rinui-gallery
 
-      - name: Package & validate macOS .app bundle
+      - name: Layer 2 & 3 - Package & validate macOS .app bundle (strict Cocoa QPA)
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -162,27 +167,22 @@ jobs:
           (
             cd "${TMP_DIR}"
             env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR QT_QPA_PLATFORM=offscreen \
-              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin"
+              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin-default"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR QT_QPA_PLATFORM=offscreen \
+              ./rinui-gallery --upstream-mac-frame --smoke-test --config-dir "${TMP_DIR}/cfg-bin-upstream"
           )
 
           cp -R dist/RinUIGallery.app "${TMP_DIR}/RinUIGallery.app"
-          if (cd "${TMP_DIR}" && env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
-              QT_QPA_PLATFORM=cocoa ./RinUIGallery.app/Contents/MacOS/RinUIGallery --smoke-test --config-dir "${TMP_DIR}/cfg-cocoa"); then
-            echo "macOS Cocoa QPA smoke test inside isolated .app: PASSED"
-          else
-            echo "::notice::macOS Cocoa QPA smoke test unavailable on headless CI runner; testing isolated .app frameworks/QML with temporary qoffscreen plugin"
-            QT_PLUGINS="$("${QMAKE}" -query QT_INSTALL_PLUGINS)"
-            cp "${QT_PLUGINS}/platforms/libqoffscreen.dylib" "${TMP_DIR}/RinUIGallery.app/Contents/PlugIns/platforms/"
-            codesign --force --deep --sign - "${TMP_DIR}/RinUIGallery.app"
-            (
-              cd "${TMP_DIR}"
-              env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
-                QT_QPA_PLATFORM=offscreen ./RinUIGallery.app/Contents/MacOS/RinUIGallery --smoke-test --config-dir "${TMP_DIR}/cfg-app-offscreen"
-            )
-          fi
+          (
+            cd "${TMP_DIR}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+              QT_QPA_PLATFORM=cocoa ./RinUIGallery.app/Contents/MacOS/RinUIGallery --smoke-test --config-dir "${TMP_DIR}/cfg-cocoa-default"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+              QT_QPA_PLATFORM=cocoa ./RinUIGallery.app/Contents/MacOS/RinUIGallery --upstream-mac-frame --smoke-test --config-dir "${TMP_DIR}/cfg-cocoa-upstream"
+          )
           rm -rf "${TMP_DIR}"
 
-      - name: Package & validate Windows distribution
+      - name: Layer 2 & 3 - Package & validate Windows distribution + unsigned MSIX (strict Windows QPA)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -190,7 +190,7 @@ jobs:
           $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("rinui-win-smoke-" + [System.Guid]::NewGuid().ToString("N"))
           New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 
-          # 1. Verify isolated raw binary under offscreen QPA first
+          # 1. Verify isolated raw binary under Layer 1 offscreen QPA first
           $rawBin = Join-Path $tmpDir "rinui-gallery-raw.exe"
           Copy-Item "target\release\rinui-gallery.exe" $rawBin
           $qtDirRaw = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
@@ -213,7 +213,7 @@ jobs:
               throw "Isolated Windows raw binary offscreen smoke test failed with exit code $LASTEXITCODE"
             }
 
-            # 2. Verify windeployqt package completely isolated from QT_ROOT_DIR\bin in PATH
+            # 2. Verify isolated windeployqt package under strict Layer 2 Windows QPA (no offscreen fallback)
             $pkgDir = Join-Path $tmpDir "pkg"
             Copy-Item -Recurse -Force "dist\RinUIGallery-win64" $pkgDir
             $filteredPath = ($origPath -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $qtBinClean) }) -join ';'
@@ -223,18 +223,10 @@ jobs:
             Push-Location $pkgDir
             $env:QT_QPA_PLATFORM = "windows"
             & $exe --smoke-test --config-dir (Join-Path $tmpDir "cfg-pkg-windows")
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "Windows QPA smoke test inside isolated windeployqt package: PASSED"
-            } else {
-              Write-Host "::notice::Windows QPA exited $LASTEXITCODE on headless CI runner; verifying packaged DLLs/QML via temporary qoffscreen.dll"
-              $qtPlugins = (& $env:QMAKE -query QT_INSTALL_PLUGINS).Trim()
-              Copy-Item (Join-Path $qtPlugins "platforms\qoffscreen.dll") (Join-Path $pkgDir "platforms\qoffscreen.dll")
-              $env:QT_QPA_PLATFORM = "offscreen"
-              & $exe --smoke-test --config-dir (Join-Path $tmpDir "cfg-pkg-offscreen")
-              if ($LASTEXITCODE -ne 0) {
-                throw "Packaged Windows offscreen smoke test failed with exit code $LASTEXITCODE"
-              }
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows QPA smoke test inside isolated windeployqt package failed with exit code $LASTEXITCODE"
             }
+            Write-Host "Layer 2 (Windows): strict isolated windeployqt Windows QPA smoke test PASSED"
           } finally {
             Pop-Location -ErrorAction SilentlyContinue
             $env:Path = $origPath
@@ -247,7 +239,10 @@ jobs:
             Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
           }
 
-      - name: Package & validate Linux distribution (offscreen + Xvfb X11)
+          # 3. Build unsigned MSIX and verify unpacked layout (install/launch NOT executed in CI)
+          ./scripts/package_msix.ps1 -SourceDirectory dist\RinUIGallery-win64 -OutputDirectory dist\msix -SkipSign -VerifyLayout
+
+      - name: Layer 2 & 3 - Package & validate Linux distribution (offscreen + headless xvfb-xcb)
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -270,7 +265,21 @@ jobs:
             env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
               xvfb-run -a env QT_QPA_PLATFORM=xcb ./run-gallery.sh --smoke-test --config-dir "${TMP_DIR}/cfg-pkg-xcb"
           )
+          echo "Layer 2 (Linux): headless xvfb-xcb smoke test PASSED (NOT real X11 WM or native Wayland compositor)"
           rm -rf "${TMP_DIR}"
+
+      - name: Write layered CI verification summary
+        shell: bash
+        run: |
+          cat >> "${GITHUB_STEP_SUMMARY}" <<EOF
+          ### ${{ matrix.os }} (Qt ${{ matrix.qt_version }}) Layered Verification
+          | Layer | Scope | Outcome |
+          |---|---|---|
+          | Layer 1 (Offscreen) | \`cargo test --workspace\`, \`qt-widgets-test\`, \`engine_config_demo\`, raw binary offscreen smoke | Passed |
+          | Layer 2 (Platform QPA) | macOS \`cocoa\` (self-drawn + \`--upstream-mac-frame\`) / Windows \`windows\` / Linux headless \`xvfb-xcb\` | Passed |
+          | Layer 3 (Packaging) | Standalone bundle deploy + Windows unsigned MSIX pack & unpack verify (on Windows runner) | Passed |
+          | Manual / Real Desktop / Signing | Real X11 WM & native Wayland, Win10/11 DPI/Snap/Acrylic, macOS visual/fullscreen QA, MSIX install/launch, Authenticode/Developer ID signing | NOT RUN in CI |
+          EOF
 
       - name: Upload packaged Gallery artifact
         uses: actions/upload-artifact@v4

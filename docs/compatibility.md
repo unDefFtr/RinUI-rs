@@ -16,9 +16,9 @@
 |---|---|---|
 | `RinUI/__init__.py` | Sets `QGuiApplication.setHighDpiScaleFactorRoundingPolicy(PassThrough)` before app construction; re-exports `core.*`. | `rinui_set_high_dpi_pass_through()` in `native/src/rinui_qt_bridge.cpp`, called inside `RinUIHost::new()` prior to `QGuiApplication::new()`. |
 | `RinUI/core/config.py` | OS/Windows build checks (`is_windows`, `is_win10`, `is_win11`, `is_win11_22h2`), `Theme` & `BackdropEffect` enums, `DEFAULT_CONFIG`, `ConfigManager`, `RinConfig`, `_resolve_config_dir()` (`AppLocalDataLocation / "RinUI" / "config"`). | `rinui-platform` (`PlatformCapabilities`, `ThemeMode`, `BackdropEffect`, `RinConfig`, `ConfigStore`, `AppJsonStore`, `resolve_app_base_dir`). Adds atomic writes, schema migration (`schema_version`), corrupt-file backup recovery, and per-app directory isolation. |
-| `RinUI/core/launcher.py` | `RinUIWindow`: validates `QCoreApplication`, calls `init_config()`, creates/shares `QQmlApplicationEngine`, hooks `warnings` & failure log, registers `ThemeManager` & Windows `WinEventManager`, adds import path, discovers `isRinUIWindow` root + child `QQuickWindow`s, attaches Windows `WinEventFilter`, macOS `NSWindow` tweaks, `setIcon()`, `release()` & cleanup. | `RinUIHost` + `HostHandle` in `crates/rinui-host/src/app.rs` + `native/src/rinui_qt_bridge.cpp`. Adds strict Rust ownership, `!Send + !Sync` thread-affinity enforcement, explicit multi-window registry, and deterministic drop ordering. |
-| `RinUI/core/theme.py` | `ThemeManager(QObject)`: singleton state, `ThemeListener` polling `darkdetect` every 1s, `themeChanged`/`backdropChanged` signals, slots (`toggle_theme`, `get_theme`, `get_theme_name`, `apply_backdrop_effect`, `get_backdrop_effect`, `set_theme_color`, `get_theme_color`), Windows 10/11 DWM & `SetWindowCompositionAttribute`. | `rinui::ThemeManager` (`crates/rinui-host/src/theme.rs`, CXX-Qt `#[qobject]`). Replaces 1s `darkdetect` polling with Qt 6 `QGuiApplication::styleHints()->colorSchemeChanged()` signal notifications; preserves exact QML slot/signal signatures, return codes (`0`, `-1`, `-2`), and DWM behavior; adds macOS `NSAppearance` sync. |
-| `RinUI/core/translator.py` | `RinUITranslator(QTranslator)`: resolves `<RINUI_PATH>/RinUI/languages/<locale>.qm`, falls back to `en_US.qm`, calls `QLocale.setDefault(...)` and `QTranslator.load(...)`. | `TranslationManager` (`crates/rinui-host/src/translator.rs`) + transactional C++ `QTranslator` owner (`rinui_qt_bridge.cpp`). Normalizes locale tags (`zh-CN`, `zh_Hans_CN`, `zh`), loads from embedded QRC or filesystem dev path, treats valid empty catalogs (`en_US.qm`) cleanly on Qt 6.9 (`install_translator_or_empty`), supports app catalogs, and runs `engine.retranslate()`. |
+| `RinUI/core/launcher.py` | `RinUIWindow`: validates `QCoreApplication`, calls `init_config()`, creates/shares `QQmlApplicationEngine`, hooks `warnings` & failure log, registers `ThemeManager` & Windows `WinEventManager`, adds import path, discovers `isRinUIWindow` root + child `QQuickWindow`s, attaches Windows `WinEventFilter`, macOS `NSWindow` tweaks, `setIcon()`, `release()` & cleanup. | `RinUIRuntime<'app>`, `RinUISession<'app>`, `SessionHandle<'app>`, and standalone wrapper `RinUIHost` (`crates/rinui-host/src/{runtime,app}.rs`) + `native/src/rinui_qt_bridge.cpp`. Supports owning or borrowing `QGuiApplication`/`QApplication`, `EngineMode::Shared` vs `EngineMode::Private`, generic checked root property/method interop (`set_root_property`, `get_root_property`, `invoke_root_method`), controlled `EngineConfigurator`, and owner-scoped cleanup. |
+| `RinUI/core/theme.py` | `ThemeManager(QObject)`: singleton state, `ThemeListener` polling `darkdetect` every 1s, `themeChanged`/`backdropChanged` signals, slots (`toggle_theme`, `get_theme`, `get_theme_name`, `apply_backdrop_effect`, `get_backdrop_effect`, `set_theme_color`, `get_theme_color`), Windows 10/11 DWM & `SetWindowCompositionAttribute`. | `rinui::ThemeManager` (`crates/rinui-host/src/theme.rs`, CXX-Qt `#[qobject]`). Replaces 1s `darkdetect` polling with Qt 6 `QGuiApplication::styleHints()->colorSchemeChanged()` signal notifications; preserves exact QML slot/signal signatures, return codes (`0`, `-1`, `-2`), and DWM/Win10 WCA behavior (including explicit `ACCENT_DISABLED` cleanup when disabling Acrylic); adds macOS `NSAppearance` sync. |
+| `RinUI/core/translator.py` | `RinUITranslator(QTranslator)`: resolves `<RINUI_PATH>/RinUI/languages/<locale>.qm`, falls back to `en_US.qm`, calls `QLocale.setDefault(...)` and `QTranslator.load(...)`. | `TranslationManager` (`crates/rinui-host/src/translator.rs`) + atomic 2-phase C++ `QTranslator` owner (`rinui_qt_bridge.cpp`). Decouples active locale / `QLocale::setDefault()` from RinUI `en_US` catalog fallback, normalizes locale tags (`zh-CN`, `zh_Hans_CN`, `zh`), rolls back on corrupted `.qm` loads, unloads missing optional app catalogs, supports empty catalogs (`en_US.qm`) cleanly on Qt 6.9, and retranslates all registered engines. |
 | `RinUI/core/logger.py` | Opt-in `RinUI` Python logger (`configure_logging`, `get_logger`). | `tracing` + `tracing-subscriber` diagnostics + `qml-runtime.log` QML failure persistence (`RINUI_QML_LOG` opt-in for warnings). |
 | `RinUI/core/windows/winapi.py` | Win32 structs, constants, `is_maximized`, `is_composition_enabled`, `find_window`, `get_resize_border_thickness`, `is_exact_monitor_sized_window`. | `native/src/rinui_win_bridge.cpp` using direct Win32/DWM headers + `RtlGetVersion`. |
 | `RinUI/core/windows/window_state.py` | Reads `titleBarHeight`, `titleBarButtonWidth`, `titleBarSafeWidth`, `titleBarMaxButtonRect`, `titleBarLeadingHost`, `titleBarHost`; traverses interactive `QQuickItem` children (skipping `QQuickText`, `QQuickPlaceholderText`, `Text_QMLTYPE*`, `Label_QMLTYPE*`) with 200ms cache. | `native/src/rinui_win_bridge.cpp` traversing `QQuickItem` tree directly in C++ (no Python reflection overhead). |
@@ -107,6 +107,7 @@ Verified in `RinUI/windows/FluentWindowBase.qml`, `RinUI/windows/window/Window.q
 | `components/qmldir` | Lists non-existent `HyperlinkButton 1.0 BasicInput/HyperlinkButton.qml`. Also contains `../themes/...` and `../utils/...` relative paths for `Theme`, `Typography`, `Severity`, `Position`, `FloatLayer`. | Drop `HyperlinkButton`. Preserve `../themes/` and `../utils/` directory hierarchy in QRC under `/rinui/RinUI` so Qt resolves canonical URLs without duplicate singletons. |
 | `themes/qmldir` | Versionless singleton entries `singleton Colors Colors.qml` and `singleton Appearance Appearance.qml`. | Normalize to `singleton Colors 1.0 Colors.qml` and `singleton Appearance 1.0 Appearance.qml` while keeping `Theme` and `Utils` consistent. |
 | `windows/qmldir` | Lists non-existent `ErrorPage 1.0 ErrorPage.qml` (`ErrorPage.qml` actually lives in `components/Navigation/ErrorPage.qml` and is pushed by relative URL). | Drop `ErrorPage 1.0 ErrorPage.qml`. |
+| `components/DateAndTime/Calendar.qml`, `DatePicker.qml`, `components/Text/SpinBox.qml` | Upstream `property var locale: Qt.locale()` and `DatePicker.monthModel` (`Qt.locale().monthName(i)`) / `SpinBox` inherited `locale` only evaluate once at creation time, leaving pre-existing controls stale when switching languages live via `set_language()`. | Host-side `sanitize_runtime_qml` (applied identically in `$OUT_DIR/rinui_sanitized/` and dev `ResourceView` without editing `upstream/Rin-UI`) injects `qsTr("")`-dependent default `locale` bindings (and updates `DatePicker.monthModel` to read `datePicker.locale.monthName(i)`) while preserving explicit caller declarative `locale:`/`calendarLocale:` and imperative `cal.locale = ...` overrides; `rinui_engine_retranslate()` also delivers deduplicated `QEvent::LocaleChange` across registered roots, items, and dynamic windows. |
 
 ### 4.3 Dynamic QML & Resource Resolution Strategy
 
@@ -131,37 +132,46 @@ Verified in `RinUI/windows/FluentWindowBase.qml`, `RinUI/windows/window/Window.q
 |---|---|---|---|
 | HiDPI `PassThrough` before app creation | `RinUI/__init__.py` | `RinUIHost::new()` (`rinui_set_high_dpi_pass_through`) | Identical timing & policy. |
 | QML Style (`Basic`) | PySide6 defaults / templates | Explicit `QQuickStyle::setStyle("Basic")` | Guarantees custom RinUI controls work across OS themes. |
-| `ThemeManager` QML signals & slots | `RinUI/core/theme.py` | `rinui::ThemeManager` (CXX-Qt) | Exact method/signal names & return codes (`0`/`-1`/`-2`). |
+| `ThemeManager` QML signals & slots | `RinUI/core/theme.py` | `rinui::ThemeManager` (CXX-Qt) | Exact method/signal names & return codes (`0`/`-1`/`-2`), guarded by dynamic RW `theme_borrow_state` + `mut_slot_active` QML slot re-entrancy checks (`ThemeManagerRef`/`ThemeManagerMut` RAII guards return `Err(HostError::ReentrantCall)` on overlapping borrows or QML re-entry). |
 | System theme detection | 1s `QThread` polling `darkdetect` | Qt 6 `QStyleHints::colorSchemeChanged` signal | Zero polling overhead; immediate live updates. |
-| Theme accent color & multi-window sync | `ThemeManager` singleton + `windows` list | `ThemeManager` + `Rc<RefCell<ConfigStore>>` + `RinUIHost` window registry | Singletons shared engine-wide; native frame theme updates all tracked windows. |
+| Theme accent color & multi-window sync | `ThemeManager` singleton + `windows` list | `ThemeManager` + `Rc<RefCell<ConfigStore>>` + owner-scoped `RinUISession` window registry | Singletons shared engine-wide; `sync_windows()` refuses auto-claiming ambiguous shared-engine `session_id == 0` windows (use `register_window_from_property()`); QML callback self/peer session drops defer engine/window teardown cleanly across `QmlExecGuard` and Qt event loops. |
 | Configuration persistence | `ConfigManager` (`rin_ui.json`) | `rinui-platform` (`ConfigStore`, `AppJsonStore`) | Atomic write, `schema_version` migration, corrupt backup recovery, isolated per-app dirs. |
-| Internationalization | `RinUITranslator` (`QTranslator`) | `TranslationManager` + C++ `QTranslator` owner | Supports QRC `.qm`, filesystem `.qm`, `en_US` fallback, app catalogs, live `retranslate()`. |
-| Windows native window & DWM | `pywin32` + `ctypes` (`WinEventFilter`, `WinEventManager`) | C++ `WinEventFilter` & `WinEventManager` + `dwmapi`/`user32`/`shell32` | Compiled & tested in `windows-latest` CI (`Qt 6.9.3` MSVC, `offscreen` + isolated `windeployqt` `windows` QPA smoke test); interactive desktop/multi-monitor visual QA pending. |
-| macOS native window (`NSWindow`) | `PyObjC` (`AppKit` + `objc`) | Objective-C++ `rinui_mac_window.mm` (ARC) | Compiled & tested locally (`Qt 6.12.0`, `Qt 6.9.3`) + `macos-latest` CI (`Qt 6.9.3`), including isolated Cocoa `.app` smoke test; interactive desktop visual QA pending. |
-| Linux X11 / Wayland | Qt `FramelessWindowHint` + `startSystemResize` | Qt `FramelessWindowHint` + `rinui_linux_window.cpp` | Compiled & tested in `ubuntu-latest` CI (`Qt 6.9.3`, `offscreen` + `xvfb-run` `xcb`); graceful `-2` return for DWM backdrops; real X11 WM & Wayland compositor visual QA pending. |
-| Standalone release without checkout | PyInstaller spec | Embedded RCC (`rinui_resources.qrc`) in binary | Tested independently outside source tree. |
+| Internationalization | `RinUITranslator` (`QTranslator`) | `TranslationManager` + C++ `QTranslator` owner + `sanitize_runtime_qml` | Supports QRC `.qm`, filesystem `.qm`, `en_US` fallback, app catalogs, live `retranslate()` + `QEvent::LocaleChange`, and reactive updates on pre-existing `Calendar` / `CalendarDatePicker` / `DatePicker` / `SpinBox` controls without overriding explicit `locale` / `calendarLocale`. |
+| `QGuiApplication` adoption & multi-session | Hosts attached to external Qt apps / `QApplication` share one app | `RinUIRuntime::attach_existing`, `attach_existing_raw`, `EngineMode::{Shared, Private}` | Enforces process-level `QGuiApplication`, `QLocale`, Quick style, and translator invariants while isolating per-session roots/windows and optional per-engine QML contexts. |
+| `TranslationManager` | Coupled RinUI `.qm` selection with `QLocale` | Decoupled `active_locale` vs `rinui_locale` + per-catalog results | Preserves app-unique locales (e.g., `fr_FR` app `.qm` + `en_US` RinUI fallback) with atomic rollback on error. |
+| Dev filesystem view | Direct disk import | Per-launch sanitized staging copy owned by `ResourceView` & `GalleryDevView` | Shares exact `qmldir` sanitizer rules with `build.rs`; reloads disk edits on restart without touching `upstream/Rin-UI`. |
+| Windows native window & DWM | `pywin32` + `ctypes` (`WinEventFilter`, `WinEventManager`) | Runtime-lifetime C++ `WinEventFilter` & `WinEventManager` + `dwmapi`/`user32`/`shell32` | Compiles/runs in `windows-latest` CI (`Qt 6.9.3` MSVC); includes Win10 Acrylic `ACCENT_DISABLED` disable fix; physical Win10/11 desktop/multi-monitor visual QA pending. |
+| macOS native window (`NSWindow`) | `PyObjC` (`AppKit` + `objc`) | Objective-C++ `rinui_mac_window.mm` (ARC) + `RinUINativeMacFrame` context signal | Tested locally (`Qt 6.12.0`) & CI (`Qt 6.9.3`) under `offscreen` and strict Cocoa QPA in both self-drawn & `--upstream-mac-frame` modes; interactive visual QA pending. |
+| Linux X11 / Wayland | Qt `FramelessWindowHint` + `startSystemResize` | Qt `FramelessWindowHint` + `rinui_linux_window.cpp` | Tested in `ubuntu-latest` CI (`offscreen` + headless `xvfb-xcb`); graceful `-2` for DWM backdrops; real X11 WM & native Wayland compositor QA pending. |
+| Standalone release & MSIX | PyInstaller spec + `package_msix.ps1` | Embedded RCC (`rinui_resources.qrc`) + host `package_msix.ps1` (`SkipSign`/`VerifyLayout`) | Rust directory/MSIX builds without Python/PyInstaller; CI checks unsigned MSIX unpack; MSIX Windows install/launch & Authenticode/Developer ID signing pending credentials/desktop. |
 
 ### macOS titlebar modes and interactive validation
 
-Upstream `FluentWindow.qml` uses a 36-point titlebar when `useNativeMacFrame` is
-enabled, and the theme's 48-point titlebar with QML traffic-light buttons when
-it is disabled. Python bundles that cannot import `AppKit` / `objc` fall back
-to the latter mode. Compare screenshots using the same frame mode and upstream
-revision; native and QML traffic lights also have different geometry.
+Upstream QML (`RinUI/windows/FluentWindow.qml` and `RinUI/windows/window/Window.qml`) sets
+`property bool useNativeMacFrame: isMacOS`. When the upstream Python runtime can import
+`AppKit` / `objc` (`PyObjC`), macOS defaults to the native frame; when `PyObjC` is
+unavailable, Python falls back to RinUI's self-drawn QML frame. Upstream `FluentWindow`
+uses a 36-point titlebar when `useNativeMacFrame` is enabled, and the theme's 48-point
+titlebar with QML traffic-light buttons when it is disabled.
 
-The Rust host and Gallery default to the self-drawn QML frame and traffic-light
-controls, matching the Python Gallery's QML-frame behavior. `MacWindowOptions::default()`
-sets `enabled` to `false`; consumers must set it to `true` to opt into the native
-frame. Gallery users can opt in with `--native-mac-frame`.
-`--no-native-mac-frame` remains supported to explicitly select the default QML
-frame; if both flags are supplied, the last one wins. Upstream files remain
+By intentional compatibility policy, `rinui-rs` does **not** mimic Python's implicit
+native default on macOS: `MacWindowOptions::default()` resolves to
+`MacWindowOptions::self_drawn()` (`enabled: false`) so host embeddings opt in explicitly
+rather than altering `NSWindow` style masks unexpectedly. Consumers who want upstream's
+macOS framing behavior should explicitly select
+`MacWindowOptions::upstream_compatible()` (or `HostConfig::with_upstream_mac_frame()` /
+`RuntimeConfig::with_upstream_mac_frame()`), or `MacWindowOptions::native(offset_x,
+offset_down)`. Gallery keeps self-drawn as its default and supports
+`--upstream-mac-frame`, `--native-mac-frame`, and `--no-native-mac-frame` (last flag
+wins). Both `GalleryMain.qml` and `MultiWindowDialog.qml` bind `useNativeMacFrame` to
+the pre-first-frame `RinUINativeMacFrame` context property set by the runtime before
+loading QML, and `rinui_mac_window.mm` records `_rinuiMacFrameDiagnostic` on every window
+(`self_drawn`, `native_cocoa`, `fallback:non_cocoa_qpa`, `fallback:no_nswindow`, or
+`self_drawn:overridden_post_load`). Compare screenshots using the same frame mode, Qt
+version, window size, scale factor, and upstream revision; note also that the 36 vs 48
+point `titleBarHeight` invariant applies specifically to `FluentWindow` roots, not
+arbitrary `Window` dialogs such as `MultiWindowDialog.qml`. Upstream files remain
 unmodified.
-
-Default-mode regression checks cover both primary and secondary host windows.
-Gallery smoke tests assert `useNativeMacFrame == false` and a 48-point titlebar
-by default, or `true` and 36 points after explicit native opt-in. On 2026-11-19,
-the full offline workspace test suite and packaged Cocoa smoke tests for the
-default, native opt-in, and legacy self-drawn override all passed.
 
 In native mode, upstream disables its titlebar drag `MouseArea`. The macOS host
 therefore installs a per-window input filter to start a system move on empty
@@ -174,19 +184,17 @@ its children. If the QPA rejects a system move, a global-coordinate drag
 fallback keeps the titlebar functional. The filter is removed with the
 window's native integration.
 
-Offscreen tests and startup smoke tests do not establish that native titlebar
-dragging works. Desktop validation must check actual window position changes,
-search-field input, navigation controls, double-click behavior, and both frame
-modes. Other platform-specific visual acceptance items remain open.
+Offscreen tests and startup smoke tests establish startup, resource resolution,
+window frame selection/diagnostics, `FluentWindow` titlebar height, navigation/error
+recovery, theme switching, secondary window inheritance, and decoupled i18n, but they do
+not replace interactive physical desktop QA:
 
-On 2026-11-19, macOS desktop checks with Qt 6.12.0 verified titlebar movement
-from `(120, 88)` to `(20, 188)` in native-frame mode, and from `(120, 120)` to
-`(20, 220)` in QML-frame mode. Search-field typing and text selection did not
-move the window; double-click maximized and restored it. In the packaged
-Gallery, navigating to All Samples and clicking the titlebar back button
-returned to Home, and search suggestions remained functional. The automated
-native-frame drag exercised the coordinate fallback because Qt rejected the
-system-move request; physical-mouse system-move behavior remains to be checked.
-`cargo test --workspace --offline`, the upstream audit, and a post-reboot Cocoa
-bundle `--smoke-test` passed. These checks do not close the other desktop visual
-acceptance items above.
+- Prior baseline manual macOS desktop spot-checks on `Qt 6.12.0` (`2026-11-19`) observed
+  titlebar dragging (`(120, 88) -> (20, 188)` native, `(120, 120) -> (20, 220)` QML),
+  search-field focus/input, double-click maximize/restore, All Samples navigation, and
+  back button return, with the native drag exercising Qt's coordinate fallback.
+- Full interactive visual/desktop QA after the upstream-parity changes (physical-mouse
+  macOS system-move & traffic-light geometry/fullscreen restore, Windows 10 Acrylic &
+  Windows 11 21H2/22H2+ backdrop/Snap/workarea/DPI transitions, and Linux real X11 WM /
+  native Wayland compositor checks) remains open and is tracked separately in
+  [`docs/validation-report.md`](validation-report.md).

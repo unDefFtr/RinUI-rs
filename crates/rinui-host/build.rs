@@ -1,16 +1,17 @@
+#[path = "src/qmldir_sanitize.rs"]
+mod qmldir_sanitize;
+
 use cxx_qt_build::CxxQtBuilder;
-use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const RUNTIME_EXTENSIONS: &[&str] = &["qml", "js", "ttf", "otf", "png", "svg", "jpg", "qm"];
-
 fn main() {
     println!("cargo::rerun-if-env-changed=RINUI_UPSTREAM_DIR");
     println!("cargo::rerun-if-env-changed=QMAKE");
     println!("cargo::rerun-if-env-changed=QT_VERSION_MAJOR");
+    println!("cargo::rerun-if-changed=src/qmldir_sanitize.rs");
 
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
@@ -36,6 +37,7 @@ fn main() {
 
     let qt_bridge_cpp = native_src_dir.join("rinui_qt_bridge.cpp");
     let theme_bridge_cpp = native_src_dir.join("rinui_theme_bridge.cpp");
+    let test_support_cpp = native_src_dir.join("rinui_test_support.cpp");
 
     let mut builder = CxxQtBuilder::new()
         .qt_module("Gui")
@@ -45,9 +47,11 @@ fn main() {
         .include_dir(&native_include_dir)
         .file("src/theme.rs")
         .file("src/bridge.rs")
+        .file("src/test_support.rs")
         .qrc(&qrc_path)
         .cpp_file(&qt_bridge_cpp)
-        .cpp_file(&theme_bridge_cpp);
+        .cpp_file(&theme_bridge_cpp)
+        .cpp_file(&test_support_cpp);
 
     let include_for_cc = native_include_dir.clone();
     // Safety: adds native/include directly so C++ translation units resolve local headers.
@@ -81,6 +85,35 @@ fn main() {
     }
 
     builder.build().reexport_dependency("cxx-qt-lib").export();
+
+    if env::var_os("CARGO_FEATURE_QT_WIDGETS_TEST").is_some() {
+        compile_widgets_test_helper(&native_src_dir);
+    }
+}
+
+fn compile_widgets_test_helper(native_src_dir: &Path) {
+    let helper_cpp = native_src_dir.join("rinui_widgets_test_helper.cpp");
+    println!("cargo::rerun-if-changed={}", helper_cpp.display());
+
+    let qtbuild = qt_build_utils::QtBuild::new(vec![
+        "Core".to_owned(),
+        "Gui".to_owned(),
+        "Widgets".to_owned(),
+    ])
+    .expect("Could not locate Qt 6 Widgets for qt-widgets-test feature");
+
+    let mut build = cc::Build::new();
+    build.cpp(true).std("c++17").file(&helper_cpp);
+
+    for inc in qtbuild.include_paths() {
+        build.include(inc);
+    }
+    for fw in qtbuild.framework_paths() {
+        build.flag(format!("-F{}", fw.display()));
+    }
+
+    qtbuild.cargo_link_libraries(&mut build);
+    build.compile("rinui-widgets-test-helper");
 }
 
 fn compile_macos_native(native_include_dir: &Path, native_src_dir: &Path) {
@@ -161,9 +194,10 @@ fn prepare_rinui_resources(
     }
     fs::create_dir_all(sanitized_dir).expect("create rinui_sanitized directory");
 
-    let mut files = Vec::new();
-    collect_runtime_files(upstream_rinui, upstream_rinui, &mut files);
-    files.sort();
+    let files = qmldir_sanitize::collect_runtime_files_with_dirs(upstream_rinui, &mut |dir| {
+        println!("cargo::rerun-if-changed={}", dir.display());
+    })
+    .expect("collect upstream RinUI runtime files");
 
     let mut drops = Vec::new();
     let mut qrc_entries: Vec<(String, PathBuf)> = Vec::with_capacity(files.len());
@@ -173,13 +207,24 @@ fn prepare_rinui_resources(
         println!("cargo::rerun-if-changed={}", src_path.display());
 
         if Path::new(rel).file_name().and_then(|n| n.to_str()) == Some("qmldir") {
-            let (sanitized_text, file_drops) = sanitize_qmldir(rel, &src_path);
+            let (sanitized_text, file_drops) =
+                qmldir_sanitize::sanitize_qmldir_file(rel, &src_path)
+                    .expect("sanitize upstream qmldir");
             drops.extend(file_drops);
             let dst_path = sanitized_dir.join(rel);
             if let Some(parent) = dst_path.parent() {
                 fs::create_dir_all(parent).expect("create sanitized qmldir parent");
             }
             fs::write(&dst_path, sanitized_text).expect("write sanitized qmldir");
+            qrc_entries.push((rel.clone(), dst_path));
+        } else if let Some(patched) = qmldir_sanitize::sanitize_runtime_qml(rel, &src_path)
+            .expect("sanitize upstream QML runtime file")
+        {
+            let dst_path = sanitized_dir.join(rel);
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent).expect("create sanitized QML parent");
+            }
+            fs::write(&dst_path, patched).expect("write sanitized QML");
             qrc_entries.push((rel.clone(), dst_path));
         } else {
             qrc_entries.push((rel.clone(), src_path));
@@ -204,110 +249,6 @@ fn prepare_rinui_resources(
     writeln!(qrc, "</RCC>").unwrap();
 
     (files, drops, qrc_path)
-}
-
-fn collect_runtime_files(root: &Path, current: &Path, out: &mut Vec<String>) {
-    println!("cargo::rerun-if-changed={}", current.display());
-    let mut entries: Vec<_> = fs::read_dir(current)
-        .expect("read upstream RinUI directory")
-        .flatten()
-        .collect();
-    entries.sort_by_key(|e| e.path());
-
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if path.is_dir() {
-            if name_str == "__pycache__" || name_str.starts_with('.') {
-                continue;
-            }
-            collect_runtime_files(root, &path, out);
-        } else if is_runtime_file(&path) {
-            let rel = path
-                .strip_prefix(root)
-                .expect("strip RinUI root")
-                .to_string_lossy()
-                .replace('\\', "/");
-            out.push(rel);
-        }
-    }
-}
-
-fn is_runtime_file(path: &Path) -> bool {
-    if path.file_name().and_then(|n| n.to_str()) == Some("qmldir") {
-        return true;
-    }
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|ext| {
-            RUNTIME_EXTENSIONS
-                .iter()
-                .any(|allowed| ext.eq_ignore_ascii_case(allowed))
-        })
-        .unwrap_or(false)
-}
-
-fn sanitize_qmldir(rel_qmldir: &str, src_path: &Path) -> (String, Vec<(String, String)>) {
-    let qmldir_dir = src_path.parent().expect("qmldir must have parent");
-    let raw = fs::read_to_string(src_path).expect("read upstream qmldir");
-
-    let mut out_lines = Vec::new();
-    let mut drops = Vec::new();
-    let mut declared_types = BTreeSet::new();
-
-    for raw_line in raw.lines() {
-        let trimmed = raw_line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("module ") {
-            out_lines.push(raw_line.to_owned());
-            continue;
-        }
-
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        let Some(target) = parts.last() else {
-            out_lines.push(raw_line.to_owned());
-            continue;
-        };
-
-        let target_path = qmldir_dir.join(target);
-        if !target_path.is_file() {
-            drops.push((rel_qmldir.to_owned(), trimmed.to_owned()));
-            out_lines.push(format!("# [rinui-rs sanitized missing target] {trimmed}"));
-            continue;
-        }
-
-        // Normalize versionless singleton declarations in themes/qmldir (e.g. `singleton Colors Colors.qml`).
-        if parts[0] == "singleton" && parts.len() == 3 {
-            let normalized = format!("singleton {} 1.0 {}", parts[1], parts[2]);
-            declared_types.insert(parts[1].to_owned());
-            out_lines.push(normalized);
-        } else if parts[0] != "singleton" && parts.len() == 2 {
-            let normalized = format!("{} 1.0 {}", parts[0], parts[1]);
-            declared_types.insert(parts[0].to_owned());
-            out_lines.push(normalized);
-        } else {
-            let type_name = if parts[0] == "singleton" {
-                parts.get(1).copied().unwrap_or("")
-            } else {
-                parts[0]
-            };
-            declared_types.insert(type_name.to_owned());
-            out_lines.push(raw_line.to_owned());
-        }
-    }
-
-    if rel_qmldir == "qmldir"
-        && !declared_types.contains("ScrollView")
-        && qmldir_dir.join("components/ScrollView.qml").is_file()
-    {
-        out_lines.push(String::new());
-        out_lines.push("# [rinui-rs added missing existing component]".to_owned());
-        out_lines.push("ScrollView 1.0 components/ScrollView.qml".to_owned());
-    }
-
-    let mut result = out_lines.join("\n");
-    result.push('\n');
-    (result, drops)
 }
 
 fn write_manifest_rs(out_path: &Path, files: &[String], drops: &[(String, String)]) {

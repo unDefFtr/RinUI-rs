@@ -18,6 +18,7 @@
 #include <QTimer>
 
 #include <cstring>
+#include <memory>
 #include <utility>
 
 #ifdef _WIN32
@@ -859,7 +860,7 @@ private:
 
 WinEventFilter* s_event_filter = nullptr;
 bool s_filter_installed = false;
-QPointer<rinui::win::WinEventManager> s_event_manager;
+std::unique_ptr<rinui::win::WinEventManager> s_event_manager;
 QString s_last_backdrop_effect = QStringLiteral("none");
 uint32_t s_last_win10_light = 0xA6FFFFFFu;
 uint32_t s_last_win10_dark = 0xA6000000u;
@@ -978,6 +979,31 @@ void apply_win10_acrylic(HWND hwnd, bool is_dark, uint32_t win10_light, uint32_t
     data.pv_data = &accent;
     data.cb_data = sizeof(accent);
     set_wca(hwnd, &data);
+}
+
+void disable_win10_acrylic(HWND hwnd)
+{
+    if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+        auto set_wca = reinterpret_cast<SetWindowCompositionAttributeFn>(
+            GetProcAddress(user32, "SetWindowCompositionAttribute"));
+        if (set_wca) {
+            AccentPolicy accent{};
+            accent.accent_state = 0; // ACCENT_DISABLED
+            accent.accent_flags = 0;
+            accent.gradient_color = 0;
+            accent.animation_id = 0;
+
+            WindowCompositionAttribData data{};
+            data.attrib = kWcaAccentPolicy;
+            data.pv_data = &accent;
+            data.cb_data = sizeof(accent);
+            set_wca(hwnd, &data);
+        }
+    }
+    if (is_dwm_composition_enabled()) {
+        const MARGINS zero_margins{0, 0, 0, 0};
+        DwmExtendFrameIntoClientArea(hwnd, &zero_margins);
+    }
 }
 
 void trigger_theme_manager_refresh()
@@ -1132,10 +1158,10 @@ void register_engine_objects(QQmlApplicationEngine& engine)
 {
 #ifdef _WIN32
     if (!s_event_manager) {
-        s_event_manager = new rinui::win::WinEventManager(&engine);
+        s_event_manager = std::make_unique<rinui::win::WinEventManager>(nullptr);
     }
     if (auto* ctx = engine.rootContext()) {
-        ctx->setContextProperty(QStringLiteral("WinEventManager"), s_event_manager.data());
+        ctx->setContextProperty(QStringLiteral("WinEventManager"), s_event_manager.get());
     }
 #else
     Q_UNUSED(engine);
@@ -1191,16 +1217,29 @@ void teardown_window(QQuickWindow* window)
 #endif
 }
 
-void teardown_all()
+void teardown_windows_and_filters()
 {
 #ifdef _WIN32
     if (s_event_manager) {
         s_event_manager->clear_windows();
     }
     remove_filter_if_installed();
-    s_event_manager = nullptr;
     s_last_backdrop_effect = QStringLiteral("none");
 #endif
+}
+
+void teardown_runtime_services()
+{
+#ifdef _WIN32
+    s_event_manager.reset();
+    s_last_backdrop_effect = QStringLiteral("none");
+#endif
+}
+
+void teardown_all()
+{
+    teardown_windows_and_filters();
+    teardown_runtime_services();
 }
 
 void apply_theme(const QString& actual_theme, const QString&)
@@ -1254,8 +1293,12 @@ int32_t apply_backdrop(
     for (HWND hwnd : hwnds) {
         if (is_win11()) {
             apply_win11_backdrop(hwnd, effect_type, accent_state, is_dark);
-        } else if (is_win10() && effect_type == QStringLiteral("acrylic")) {
-            apply_win10_acrylic(hwnd, is_dark, win10_light, win10_dark);
+        } else if (is_win10()) {
+            if (effect_type == QStringLiteral("acrylic")) {
+                apply_win10_acrylic(hwnd, is_dark, win10_light, win10_dark);
+            } else if (effect_type == QStringLiteral("none")) {
+                disable_win10_acrylic(hwnd);
+            }
         }
         apply_window_rounded_and_shadow(hwnd);
     }

@@ -24,6 +24,10 @@ FluentWindow {
         && Typography !== null
         && Severity !== null
         && Position !== null
+    readonly property bool scrollViewValid: scrollSample !== null
+    readonly property bool iconFontValid: Utils.iconFontFamily.length > 0
+        && Utils.fontIconIndex["ic_fluent_cube_20_regular"] !== undefined
+    readonly property bool noiseImageReady: noiseProbe.status === Image.Ready
     readonly property string customGreeting: typeof CustomGreeting !== "undefined" ? String(CustomGreeting) : ""
 
     Connections {
@@ -101,6 +105,26 @@ FluentWindow {
             id: acrylicSample
             width: 120
             height: 60
+        }
+
+        ScrollView {
+            id: scrollSample
+            width: 120
+            height: 40
+            Text {
+                text: "ScrollView OK"
+            }
+        }
+
+        IconWidget {
+            id: iconSample
+            icon: "ic_fluent_cube_20_regular"
+        }
+
+        Image {
+            id: noiseProbe
+            visible: false
+            source: Utils.fontIconSource.replace("fonts/FluentSystemIcons-Resizable.ttf", "img/noise.png")
         }
     }
 }

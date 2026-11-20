@@ -8,6 +8,10 @@ repository.workspace = true
 links = "rinui-host"
 description = "Reusable Rust/CXX-Qt 6 host library for the upstream RinUI QML library"
 
+[features]
+default = []
+qt-widgets-test = []
+
 [dependencies]
 rinui-platform = { workspace = true }
 cxx = { workspace = true }
@@ -36,3 +40,28 @@ harness = false
 [[test]]
 name = "hardening"
 harness = false
+
+[[test]]
+name = "i18n_semantics"
+harness = false
+
+[[test]]
+name = "runtime_sessions"
+harness = false
+
+[[test]]
+name = "core_app_rejection"
+harness = false
+
+[[test]]
+name = "object_interop"
+harness = false
+
+[[test]]
+name = "parity_review_regressions"
+harness = false
+
+[[test]]
+name = "external_qapplication"
+harness = false
+required-features = ["qt-widgets-test"]

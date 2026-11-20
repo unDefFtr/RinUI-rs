@@ -21,7 +21,13 @@ void setup_window(QQuickWindow* window, bool native_mac_frame, int offset_x, int
 /// Tear down native window hooks/filters/observers for a single window before destruction.
 void teardown_window(QQuickWindow* window);
 
-/// Tear down all platform hooks before QGuiApplication exits.
+/// Tear down per-window hooks, native event filters, and platform observers while engines may still exist.
+void teardown_windows_and_filters();
+
+/// Tear down runtime-lifetime platform services (such as WinEventManager) AFTER all QML engines are destroyed.
+void teardown_runtime_services();
+
+/// Tear down all platform hooks and runtime services before QGuiApplication exits.
 void teardown_all();
 
 /// Apply theme color mode to native window frames (e.g. DWM dark mode or NSWindow appearance).

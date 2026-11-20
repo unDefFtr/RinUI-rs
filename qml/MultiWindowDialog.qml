@@ -10,6 +10,9 @@ Window {
     minimumWidth: 360
     minimumHeight: 240
     title: qsTr("Secondary RinUI Window")
+    useNativeMacFrame: isMacOS
+        && typeof RinUINativeMacFrame !== "undefined"
+        && RinUINativeMacFrame
 
     property string actualThemeName: ThemeManager.get_theme()
     property string configuredThemeName: ThemeManager.get_theme_name()

@@ -100,6 +100,75 @@ fn main() {
         singletons_ok,
         "RinUI singletons should resolve without duplicates"
     );
+    assert!(
+        host.root_property(loaded.root_id, "scrollViewValid")
+            .value::<bool>()
+            .unwrap_or(false),
+        "ScrollView must instantiate via `import RinUI` in embedded mode"
+    );
+    assert!(
+        host.root_property(loaded.root_id, "iconFontValid")
+            .value::<bool>()
+            .unwrap_or(false),
+        "FluentSystemIcons font and index must load in embedded mode"
+    );
+    assert!(
+        host.root_property(loaded.root_id, "noiseImageReady")
+            .value::<bool>()
+            .unwrap_or(false),
+        "AcrylicBrush noise.png texture must resolve in embedded mode"
+    );
+
+    // Non-existent upstream components remain unavailable after qmldir sanitization.
+    for missing_type in [
+        "DateField",
+        "TeachingTip",
+        "ScrollViewer",
+        "HyperlinkButton",
+    ] {
+        let probe_dir = tmp.path().join(format!("probe_{missing_type}"));
+        std::fs::create_dir_all(&probe_dir).expect("create probe dir");
+        let probe_path = probe_dir.join(format!("Missing{missing_type}.qml"));
+        std::fs::write(
+            &probe_path,
+            format!("import QtQuick 2.15\nimport RinUI\n{missing_type} {{}}\n"),
+        )
+        .expect("write missing type probe");
+        let res = host.load(&QmlSource::File(probe_path));
+        match res {
+            Err(rinui_host::HostError::QmlLoadFailed { reason, .. }) => {
+                assert!(
+                    reason.contains("is not a type"),
+                    "expected `{missing_type} is not a type`, got: {reason}"
+                );
+            }
+            other => {
+                panic!("non-existent component {missing_type} must fail to load, got {other:?}")
+            }
+        }
+    }
+
+    // Dynamic NavigationView error-page fallback (`ErrorPage.qml` in Navigation/).
+    let nav_dir = tmp.path().join("nav_probe");
+    std::fs::create_dir_all(&nav_dir).expect("create nav_probe dir");
+    let nav_probe = nav_dir.join("NavErrorProbe.qml");
+    std::fs::write(
+        &nav_probe,
+        r#"import QtQuick 2.15
+import RinUI
+FluentWindow {
+    visible: false
+    navigationItems: [{ title: "Bad", page: "nonexistent/Page.qml", icon: "ic_fluent_home_20_regular" }]
+}
+"#,
+    )
+    .expect("write NavErrorProbe.qml");
+    let nav_loaded = host
+        .load(&QmlSource::File(nav_probe))
+        .expect("NavigationView ErrorPage fallback must load in embedded mode");
+    host.process_events();
+    host.release_root(nav_loaded.root_id);
+    host.process_events();
 
     let greeting = host
         .root_property(loaded.root_id, "customGreeting")
@@ -109,14 +178,25 @@ fn main() {
     assert_eq!(greeting, "HelloFromRust");
 
     // 3. Exercise ThemeManager contract, signals, accent color, and persistence.
-    assert_eq!(host.theme_manager().get_theme_name().to_string(), "Auto");
-    let initial_actual = host.theme_manager().get_theme().to_string();
+    assert_eq!(
+        host.theme_manager().unwrap().get_theme_name().to_string(),
+        "Auto"
+    );
+    let initial_actual = host.theme_manager().unwrap().get_theme().to_string();
     assert!(initial_actual == "Light" || initial_actual == "Dark");
 
-    host.theme_manager_mut().toggle_theme(QString::from("Dark"));
+    host.theme_manager_mut()
+        .unwrap()
+        .toggle_theme(QString::from("Dark"));
     host.process_events();
-    assert_eq!(host.theme_manager().get_theme_name().to_string(), "Dark");
-    assert_eq!(host.theme_manager().get_theme().to_string(), "Dark");
+    assert_eq!(
+        host.theme_manager().unwrap().get_theme_name().to_string(),
+        "Dark"
+    );
+    assert_eq!(
+        host.theme_manager().unwrap().get_theme().to_string(),
+        "Dark"
+    );
     assert_eq!(
         host.root_property(loaded.root_id, "actualThemeName")
             .value::<QString>()
@@ -131,20 +211,30 @@ fn main() {
     assert!(signal_count >= 1);
 
     host.theme_manager_mut()
+        .unwrap()
         .toggle_theme(QString::from("Light"));
     host.process_events();
-    assert_eq!(host.theme_manager().get_theme().to_string(), "Light");
+    assert_eq!(
+        host.theme_manager().unwrap().get_theme().to_string(),
+        "Light"
+    );
 
-    host.theme_manager_mut().toggle_theme(QString::from("Auto"));
+    host.theme_manager_mut()
+        .unwrap()
+        .toggle_theme(QString::from("Auto"));
     host.process_events();
-    assert_eq!(host.theme_manager().get_theme_name().to_string(), "Auto");
-    let resolved_after_auto = host.theme_manager().get_theme().to_string();
+    assert_eq!(
+        host.theme_manager().unwrap().get_theme_name().to_string(),
+        "Auto"
+    );
+    let resolved_after_auto = host.theme_manager().unwrap().get_theme().to_string();
     assert!(resolved_after_auto == "Light" || resolved_after_auto == "Dark");
 
     host.theme_manager_mut()
+        .unwrap()
         .set_theme_color(QString::from("#12AB34"));
     assert_eq!(
-        host.theme_manager().get_theme_color().to_string(),
+        host.theme_manager().unwrap().get_theme_color().to_string(),
         "#12ab34"
     );
 
@@ -162,6 +252,7 @@ fn main() {
     if !PlatformCapabilities::current().is_windows() {
         let rc = host
             .theme_manager_mut()
+            .unwrap()
             .apply_backdrop_effect(QString::from("mica"));
         assert_eq!(rc, -2);
     }
@@ -203,10 +294,22 @@ fn main() {
         "选择日期"
     );
 
+    let ja_res = host
+        .set_language("ja_JP")
+        .expect("valid locale without RinUI .qm should preserve active locale ja_JP");
+    assert_eq!(ja_res.active_locale, "ja_JP");
+    assert_eq!(ja_res.effective_locale, "ja_JP");
+    assert_eq!(ja_res.rinui_locale, "en_US");
+    assert!(ja_res.rinui_used_fallback);
+    assert!(!ja_res.active_locale_fallback);
+    assert!(ja_res.used_fallback);
+
     let fallback_res = host
         .set_language("xx_NONEXISTENT")
-        .expect("missing locale should fall back to en_US");
+        .expect("unrecognized locale should fall back to en_US");
     assert!(fallback_res.used_fallback);
+    assert!(fallback_res.active_locale_fallback);
+    assert_eq!(fallback_res.active_locale, "en_US");
     assert_eq!(fallback_res.effective_locale, "en_US");
     host.process_events();
     assert_eq!(
@@ -218,12 +321,14 @@ fn main() {
     );
 
     // 5. Exercise multi-window theme sync and controlled release cleanup.
+    let callbacks_before_dialog = callbacks.get();
+    assert_eq!(callbacks_before_dialog, 2);
     let dialog_qml = workspace_root.join("qml").join("MultiWindowDialog.qml");
     let secondary = host
         .load(&QmlSource::File(dialog_qml))
         .expect("load secondary MultiWindowDialog.qml");
     host.process_events();
-    assert_eq!(callbacks.get(), 2);
+    assert_eq!(callbacks.get(), callbacks_before_dialog + 1);
     assert_eq!(host.handle().open_window_count(), 2);
 
     if cfg!(target_os = "macos") {
@@ -235,7 +340,9 @@ fn main() {
         );
     }
 
-    host.theme_manager_mut().toggle_theme(QString::from("Dark"));
+    host.theme_manager_mut()
+        .unwrap()
+        .toggle_theme(QString::from("Dark"));
     host.process_events();
     assert_eq!(
         host.root_property(secondary.root_id, "actualThemeName")

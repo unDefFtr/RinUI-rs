@@ -1,13 +1,13 @@
 use crate::config::{format_config_path, GalleryConfig};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList};
-use rinui_host::{qt_file_exists, AppJsonStore, HostHandle, QmlSource};
+use rinui_host::{AppJsonStore, HostHandle, QmlSource};
 use std::cell::RefCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::rc::Rc;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 fn guard_ffi<R>(op: &'static str, fallback: R, f: impl FnOnce() -> R) -> R {
     match catch_unwind(AssertUnwindSafe(f)) {
@@ -165,7 +165,7 @@ pub use qobject::GalleryBackend;
 pub struct GalleryBackendRust {
     host: Option<HostHandle>,
     config_store: Option<Rc<RefCell<AppJsonStore<GalleryConfig>>>>,
-    language_dir: Option<PathBuf>,
+    secondary_window_source: Option<QmlSource>,
     rust_counter: i32,
 }
 
@@ -174,12 +174,12 @@ impl GalleryBackend {
         mut self: Pin<&mut Self>,
         host: HostHandle,
         config_store: Rc<RefCell<AppJsonStore<GalleryConfig>>>,
-        language_dir: Option<PathBuf>,
+        secondary_window_source: QmlSource,
     ) {
         let mut rust = self.as_mut().rust_mut();
         rust.host = Some(host);
         rust.config_store = Some(config_store);
-        rust.language_dir = language_dir;
+        rust.secondary_window_source = Some(secondary_window_source);
     }
 
     pub fn get_version(&self) -> QString {
@@ -198,6 +198,13 @@ impl GalleryBackend {
 
     pub fn get_language(&self) -> QString {
         guard_ffi("get_language", QString::from("en_US"), || {
+            if let Some(host) = &self.rust().host {
+                if let Ok(active) = host.current_locale() {
+                    if !active.is_empty() {
+                        return QString::from(active.as_str());
+                    }
+                }
+            }
             if let Some(store) = &self.rust().config_store {
                 if let Ok(guard) = store.try_borrow() {
                     return QString::from(guard.get().language.as_str());
@@ -219,40 +226,38 @@ impl GalleryBackend {
     pub fn set_language(mut self: Pin<&mut Self>, lang: QString) {
         guard_ffi("set_language", (), move || {
             let requested = lang.to_string();
-            let effective = if self.gallery_lang_exists(&requested) {
-                requested
-            } else {
-                warn!(lang = %requested, "Gallery translation file missing; falling back to en_US");
-                "en_US".to_owned()
+            let Some(host) = self.rust().host.clone() else {
+                return;
             };
-
-            if let Some(store) = self.rust().config_store.clone() {
-                if let Ok(mut guard) = store.try_borrow_mut() {
-                    if let Err(err) = guard.update(|cfg| cfg.language = effective.clone()) {
-                        error!(error = %err, "Failed to persist gallery language");
+            match host.set_language(&requested) {
+                Ok(result) => {
+                    let active = result.active_locale;
+                    if let Some(store) = self.rust().config_store.clone() {
+                        if let Ok(mut guard) = store.try_borrow_mut() {
+                            if let Err(err) = guard.update(|cfg| cfg.language = active.clone()) {
+                                error!(error = %err, "Failed to persist gallery language");
+                            }
+                        } else {
+                            error!("Gallery config store borrow contention during set_language");
+                        }
                     }
-                } else {
-                    error!("Gallery config store borrow contention during set_language");
-                }
-            }
-
-            if let Some(host) = self.rust().host.clone() {
-                if let Err(err) = host.set_language(&effective) {
-                    error!(error = %err, "Failed to switch gallery language");
-                } else {
                     self.as_mut().host_event_logged(QString::from(
-                        format!("Language switched to {effective}").as_str(),
+                        format!(
+                            "Language switched to {active} (RinUI catalog: {})",
+                            result.rinui_locale
+                        )
+                        .as_str(),
                     ));
+                }
+                Err(err) => {
+                    error!(
+                        error = %err,
+                        requested = %requested,
+                        "Failed to switch gallery language"
+                    );
                 }
             }
         });
-    }
-
-    fn gallery_lang_exists(&self, locale: &str) -> bool {
-        if let Some(dir) = &self.rust().language_dir {
-            return dir.join(format!("{locale}.qm")).is_file();
-        }
-        qt_file_exists(&format!(":/gallery/languages/{locale}.qm"))
     }
 
     pub fn get_favorites(&self) -> QStringList {
@@ -383,7 +388,11 @@ impl GalleryBackend {
             let Some(host) = self.rust().host.clone() else {
                 return false;
             };
-            let source = QmlSource::Url("qrc:/gallery/MultiWindowDialog.qml".to_owned());
+            let source = self
+                .rust()
+                .secondary_window_source
+                .clone()
+                .unwrap_or_else(|| QmlSource::Url("qrc:/gallery/MultiWindowDialog.qml".to_owned()));
             match host.load_secondary_window(&source) {
                 Ok(loaded) => {
                     let count = host.open_window_count();

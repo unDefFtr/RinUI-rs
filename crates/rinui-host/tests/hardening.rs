@@ -71,23 +71,34 @@ fn main() {
         {
             let store_rc = std::rc::Rc::clone(host.config_store());
             let _borrow = store_rc.borrow_mut();
-            let theme = host.theme_manager().get_theme().to_string();
+            let theme = host.theme_manager().unwrap().get_theme().to_string();
             assert!(theme == "Light" || theme == "Dark");
-            assert_eq!(host.theme_manager().get_theme_name().to_string(), "Auto");
+            assert_eq!(
+                host.theme_manager().unwrap().get_theme_name().to_string(),
+                "Auto"
+            );
             assert!(!host
                 .theme_manager()
+                .unwrap()
                 .get_theme_color()
                 .to_string()
                 .is_empty());
             assert_eq!(
-                host.theme_manager().get_backdrop_effect().to_string(),
+                host.theme_manager()
+                    .unwrap()
+                    .get_backdrop_effect()
+                    .to_string(),
                 "none"
             );
-            host.theme_manager_mut().toggle_theme(QString::from("Dark"));
             host.theme_manager_mut()
+                .unwrap()
+                .toggle_theme(QString::from("Dark"));
+            host.theme_manager_mut()
+                .unwrap()
                 .set_theme_color(QString::from("#abcdef"));
             let _ = host
                 .theme_manager_mut()
+                .unwrap()
                 .apply_backdrop_effect(QString::from("none"));
         }
 
@@ -114,10 +125,21 @@ fn main() {
         assert!(!bare_zh.used_fallback);
         assert_eq!(bare_zh.effective_locale, "zh_CN");
 
+        let ja = host
+            .set_language("ja_JP")
+            .expect("valid untranslated locale keeps ja_JP active locale");
+        assert_eq!(ja.active_locale, "ja_JP");
+        assert_eq!(ja.effective_locale, "ja_JP");
+        assert_eq!(ja.rinui_locale, "en_US");
+        assert!(ja.rinui_used_fallback);
+        assert!(!ja.active_locale_fallback);
+
         let fb = host
             .set_language("xx_NONEXISTENT")
             .expect("unknown locale fallback");
         assert!(fb.used_fallback);
+        assert!(fb.active_locale_fallback);
+        assert_eq!(fb.active_locale, "en_US");
         assert_eq!(fb.effective_locale, "en_US");
         host.process_events();
         assert_eq!(

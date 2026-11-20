@@ -1,9 +1,14 @@
 //! Independent Rust/CXX-Qt 6 host library for the upstream RinUI QML library.
 
+#[doc(hidden)]
+#[path = "test_support.rs"]
+pub mod __test_support;
 mod app;
 mod bridge;
 mod error;
+mod qmldir_sanitize;
 mod resources;
+mod runtime;
 mod theme;
 mod translator;
 mod window;
@@ -11,11 +16,17 @@ mod window;
 pub use app::{HostConfig, HostHandle, QmlSource, RinUIHost};
 pub use error::HostError;
 pub use resources::{
-    ResolvedResources, ResourceMode, EMBEDDED_IMPORT_PREFIX, EMBEDDED_QRC_ROOT,
+    ResolvedResources, ResourceMode, ResourceView, EMBEDDED_IMPORT_PREFIX, EMBEDDED_QRC_ROOT,
     PACKAGED_RINUI_FILES, SANITIZED_QMLDIR_DROPS,
 };
+pub use runtime::{
+    ContextPropertyConflict, EngineConfigurator, EngineMode, RinUIRuntime, RinUISession,
+    RuntimeConfig, SessionConfig, SessionHandle, ThemeManagerMut, ThemeManagerRef,
+};
 pub use theme::ThemeManager;
-pub use translator::{TranslationCatalog, TranslationLoadResult, TranslationManager};
+pub use translator::{
+    CatalogTranslationResult, TranslationCatalog, TranslationLoadResult, TranslationManager,
+};
 pub use window::{
     LoadedRoot, MacWindowOptions, NativeWindowRef, RootId, WindowCustomizer, WindowId,
 };
@@ -39,6 +50,11 @@ pub fn qt_file_exists(path: &str) -> bool {
 /// Return `true` when there is no active Qt application or the caller is on its main thread.
 pub fn is_qt_main_thread() -> bool {
     bridge::ffi::rinui_is_on_app_thread()
+}
+
+/// Return a raw `QObject*` pointer to Qt's active `QCoreApplication::instance()`, or null if none.
+pub fn active_qt_application_ptr() -> *mut cxx_qt::QObject {
+    bridge::ffi::rinui_active_qt_application_qobject()
 }
 
 #[cfg(test)]

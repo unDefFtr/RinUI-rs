@@ -8,19 +8,19 @@
 
 ## 核心特性
 
-- **零修改上游 Submodule**：`upstream/Rin-UI` 保持纯净（`46d77fa8371ff0e9f46a10a2eb66612dab123269`），缺失或无版本号的 `qmldir` 条目在构建阶段于 `$OUT_DIR/rinui_sanitized/` 中修正。
-- **完整保留 RinUI QML 契约**：提供完整的 `ThemeManager`（`themeChanged`、`backdropChanged` 信号与全部 `toggle_theme` / `get_theme` / `apply_backdrop_effect` / `set_theme_color` 等槽方法）及 Windows `WinEventManager`。
+- **零修改上游 Submodule**：`upstream/Rin-UI` 保持纯净（`46d77fa8371ff0e9f46a10a2eb66612dab123269`）；构建期（`$OUT_DIR/rinui_sanitized/`）与开发模式（每次启动重建的 `ResourceView` / `GalleryDevView` 视图）复用同一份 `qmldir` 清理逻辑。
+- **完整保留 RinUI QML 契约**：提供完整的 `ThemeManager`（`themeChanged`、`backdropChanged` 信号与全部槽方法）、Windows `WinEventManager`，以及首帧前生效的 `RinUINativeMacFrame` 上下文控制与 `_rinuiMacFrameDiagnostic` 诊断属性。
 - **Qt 6 原生颜色方案监听**：使用 `QStyleHints::colorSchemeChanged` 信号替代 Python 端 1 秒轮询 `darkdetect`。
 - **应用隔离与原子持久化（`rinui-platform`）**：支持基于 `AppIdentity` 的跨平台配置目录隔离、原子写入、旧版 Python `rin_ui.json` 迁移与损坏配置备份恢复。
-- **国际化支持**：系统区域与标签规范化（`zh-CN` / `zh_Hans_CN` / `zh`）、嵌入式 QRC / 开发文件系统 `.qm` 加载、`en_US` 回退、自定义应用翻译目录及运行时 `retranslate()`（已兼容 Qt 6.9 空目录 `.qm` 加载语义）。
-- **多窗口、线程亲和与生命周期加固**：`!Send + !Sync` 的 `RinUIHost` 与 `HostHandle`、进程级单实例守卫、可重入检查、CXX-Qt FFI `catch_unwind` 边界、基于 `QPointer` 的安全句柄表、严格析构顺序以及 `WindowCustomizer` 扩展钩子。
+- **国际化与活动区域解耦**：系统区域与标签规范化（`zh-CN`、`zh_Hans_CN`、`zh`），RinUI 的 `en_US` 资源回退不再覆盖应用独有语种（如 `fr_FR`）或 `QLocale::setDefault()`；支持两阶段原子替换、失败回滚、可选目录卸载与多 Engine `retranslate()`。
+- **4 层所有权、已有 Qt 应用接入与通用对象互操作**：提供进程级 `RinUIRuntime<'app>`（支持新建或借用外部 `QGuiApplication` / `QApplication`）、多会话 `RinUISession<'app>`（`EngineMode::Shared` / `EngineMode::Private`）、弱引用检测失效的 `SessionHandle<'app>` / `HostHandle`、便捷入口 `RinUIHost`，以及带类型检查的根对象属性读写（`set_root_property` / `get_root_property`）、同步方法调用（`invoke_root_method`）和受控 `configure_engine`。
 - **原生平台适配**：
-  - **macOS**：ARC Objective-C++ `NSWindow` 透明标题栏、`NSWindowStyleMaskFullSizeContentView`、`NSAppearance` 同步及交通灯偏移定位。（已在 CI `Qt 6.9.3` 与本地 `Qt 6.12.0` / `6.9.3` 编译测试，含隔离 `.app` Cocoa QPA 冒烟测试；交互式桌面视觉验收待完成。）
-  - **Windows**：C++ `WinEventFilter` & `WinEventManager`（`WM_NCCALCSIZE`、`WM_GETMINMAXINFO`、`WM_NCHITTEST`、Win11 Snap Layouts `HTMAXBUTTON`、DWM Mica/Acrylic/Tabbed 及 Win10 `SetWindowCompositionAttribute`）。（已在 CI `windows-latest` MSVC + `Qt 6.9.3` 编译测试，含 `offscreen` 与隔离 `windeployqt` `windows` QPA 冒烟测试；物理桌面与多屏 DPI 视觉验收待完成。）
-  - **Linux**：X11 / Wayland Qt 合成器集成，对不支持的 Windows DWM 背景特效安全返回 `-2`。（已在 CI `ubuntu-latest` `Qt 6.9.3` 编译测试，含 `offscreen` 与 Xvfb `xcb` 冒烟测试；真实 X11 窗口管理器与原生 Wayland 合成器视觉验收待完成。）
+  - **macOS**：显式区分 `MacWindowOptions::self_drawn()`（默认自绘）与 `MacWindowOptions::upstream_compatible()` / `native()`，ARC Objective-C++ `NSWindow` 透明标题栏与交通灯定位（已在本地 `Qt 6.12.0` 验证 `offscreen` 及独立 `.app` 原生 Cocoa 两种模式启动冒烟；完整交互式视觉 QA 待执行）。
+  - **Windows**：Runtime 寿命 C++ `WinEventFilter` & `WinEventManager`（`WM_NCCALCSIZE`、`WM_GETMINMAXINFO`、`WM_NCHITTEST`、Win11 Snap Layouts `HTMAXBUTTON`、DWM Mica/Acrylic/Tabbed、Win10 `ACCENT_DISABLED` 修复），及独立于 Python/PyInstaller 的 `package_msix.ps1` MSIX 与可选 Authenticode 签名入口（基线 `alpha.1` CI 曾验证；Parity 改动后 Windows CI、MSIX 安装启动及物理桌面视觉验收待执行）。
+  - **Linux**：X11 / Wayland Qt 合成器集成，对不支持的 Windows DWM 背景特效安全返回 `-2`（基线 CI 仅验证 `offscreen` 与 headless `xvfb-xcb`；Parity 改动后 Linux CI、真实 X11 WM 及原生 Wayland 合成器实机验收待执行）。
 - **双资源加载模式**：
   - **内嵌发布模式（`ResourceMode::Embedded`）**：通过 Qt `rcc` 将全部 QML、JS、字体、图片及 `.qm` 打包到 `qrc:/rinui/RinUI`，发布二进制不依赖源码目录。
-  - **开发文件系统模式（`ResourceMode::Filesystem` / `--dev` / `RINUI_DEV_PATH`）**：直接从本地目录加载 RinUI，且不会被 QRC 遮蔽。
+  - **开发文件系统模式（`ResourceMode::Filesystem` / `--dev` / `RINUI_DEV_PATH`）**：每次启动在临时视图中准备最新 `RinUI/` 与 `examples/`（含 `--examples-dir` / `RINUI_EXAMPLES_DIR` 支持），重启即生效且不被 QRC 遮蔽。
 
 ---
 
@@ -36,11 +36,13 @@
 | Qt 6 | CI：`Qt 6.9.3`（macOS arm64、Windows MSVC、Ubuntu GCC+`lld`）；本地 macOS：`Qt 6.12.0` & `6.9.3`（需 `Qt5Compat` 与 `QtShaderTools`） |
 | CMake | `>= 3.24`（本地验证 `4.4.0`） |
 
-| 平台 | 已实现 | 已编译 | 自动化测试与隔离打包冒烟 | 交互式桌面视觉验证 |
-|---|---|---|---|---|
-| **macOS (arm64)** | 是 | 是 | 是（`cargo test --workspace` + 隔离 `.app` Cocoa QPA） | 待人工视觉检查与截图 |
-| **Windows (x64 MSVC)** | 是 | 是 | 是（CI `cargo test --workspace` + 隔离 `windeployqt` `windows` QPA） | 待物理 Windows 桌面与多屏检查 |
-| **Linux (x64 GCC + `lld`)** | 是 | 是 | 是（CI `cargo test --workspace` + `offscreen` / Xvfb `xcb`） | 待真实 X11 WM / Wayland 检查 |
+| 平台 | 已实现 | Parity 改动后本地验证 | CI / 物理桌面与签名状态 |
+|---|---|---|---|
+| **macOS (arm64)** | 是 | 是（`Qt 6.12.0`：`audit_upstream.py`、`cargo test --workspace`、`qt-widgets-test`、`engine_config_demo`、隔离 `.app` 严格 Cocoa QPA 双模式冒烟） | 基线 `alpha.1` CI 曾通过 `Qt 6.9.3`；最新交互式视觉/全屏回归与 Developer ID 签名/公证尚未执行 |
+| **Windows (x64 MSVC)** | 是 | macOS 主机无 Windows 工具链（已实现 `package_windows.ps1` 与无 Python `package_msix.ps1`） | 基线 `alpha.1` CI 曾通过；Parity 改动后 Windows CI（严格 `windows` QPA + unsigned MSIX 解包）、MSIX 安装启动、Authenticode 签名与 Win10/11 实机验收待执行 |
+| **Linux (x64 GCC + `lld`)** | 是 | macOS 主机无 Linux 目标环境（已更新严格分层 CI 与 `xvfb-xcb` 标注） | 基线 `alpha.1` CI 曾通过 headless `xvfb-xcb`；Parity 改动后 Linux CI、真实 X11 WM 及原生 Wayland 合成器实机验收待执行 |
+
+*(资源文件收录率与 `--smoke-test` 验证初始化、导航与核心路径，不等同于全部控件的桌面人工 UI 验收。)*
 
 ---
 
@@ -75,19 +77,20 @@ cargo run -p rinui-gallery
 cargo run -p rinui-gallery -- --dev
 ```
 
-macOS 上，Gallery 和 `MacWindowOptions::default()` 均默认使用 RinUI 的 QML 自绘标题栏与交通灯按钮。只有显式传入 `--native-mac-frame` 或设置 `MacWindowOptions { enabled: true, ..Default::default() }` 才启用原生标题栏；`--no-native-mac-frame` 保留为显式选择自绘模式的兼容参数。
+macOS 上，Gallery 和 `MacWindowOptions::default()` 默认采用自绘 QML 标题栏（属于本宿主的保守兼容策略，而上游 QML 在具备 PyObjC 时默认启用原生标题栏）。如需显式对齐上游 macOS 原生框架行为，请传入 `--upstream-mac-frame`（或使用 `MacWindowOptions::upstream_compatible()` / `HostConfig::with_upstream_mac_frame()`）；`--native-mac-frame` 与 `--no-native-mac-frame` 仍保留并按“最后一个参数生效”解析。
 
-常用 Gallery 参数：`--dev [PATH]`、`--smoke-test`、`--auto-close-ms <MS>`、`--locale <LOCALE>`、`--native-mac-frame`、`--no-native-mac-frame`、`--config-dir <DIR>`。（界面截图将在桌面交互式视觉验收后补充。）
+常用 Gallery 参数：`--dev [PATH]`、`--examples-dir <DIR>`、`--smoke-test`、`--auto-close-ms <MS>`、`--locale <LOCALE>`、`--upstream-mac-frame`、`--native-mac-frame`、`--no-native-mac-frame`、`--config-dir <DIR>`。（界面截图将在桌面交互式视觉验收后补充。）
 
 ### 4. 发布打包
 
 ```bash
 cargo build --release -p rinui-gallery
 
-# macOS（仅本地 ad-hoc 签名，未配置 Apple Developer ID 公证）：
+# macOS（默认仅本地 ad-hoc 签名；可传 --sign-identity / --notarize / --notary-profile）：
 ./scripts/package_macos.sh target/release/rinui-gallery dist
-# Windows (PowerShell)：
+# Windows 目录与无 Python MSIX（PowerShell 5.1/7；可传 -Sign / -CertPfx / -CertThumbprint）：
 .\scripts\package_windows.ps1 -BinaryPath target\release\rinui-gallery.exe -OutputDir dist\RinUIGallery-win64
+.\scripts\package_msix.ps1 -SourceDirectory dist\RinUIGallery-win64 -OutputDirectory dist\msix -SkipSign -VerifyLayout
 # Linux：
 ./scripts/package_linux.sh target/release/rinui-gallery dist/rinui-gallery-linux
 ```
@@ -134,8 +137,8 @@ fn main() -> ExitCode {
 
 ## 已知限制（`v0.1.0-alpha.1`）
 
-- 交互式桌面视觉验收（macOS 原生标题栏与交通灯几何、Windows 11 DWM Mica/Acrylic/Snap Layouts 与多屏 DPI、真实 Linux X11 WM 与原生 Wayland 合成器）尚待人工实机检查。
-- `scripts/package_macos.sh` 仅做本地 ad-hoc 签名，未进行 Apple Developer ID 签名或公证（Notarization）。
+- 交互式桌面视觉验收（macOS 最新变动下的标题栏拖动/交通灯几何与退出全屏恢复、Windows 10 Acrylic 与 Windows 11 DWM Mica/Acrylic/Snap Layouts/多屏 DPI、真实 Linux X11 WM 与原生 Wayland 合成器）以及 Parity 改动后的 Windows/Linux CI 运行尚待对应系统或 Runner 执行。
+- 受限于本机缺少 Apple Developer ID 证书/公证凭据与 Windows 代码签名证书，Developer ID 签名/公证、Windows Authenticode 签名以及签名 MSIX 的安装启动卸载流程当前未执行（脚本默认保留 ad-hoc 与 `-SkipSign` 无凭证输出）。
 - 尽管 QML 与资源通过 Qt `rcc` 内嵌至二进制，分发链接 Qt 6 动态库的二进制仍需遵守 Qt LGPLv3 / GPLv3 / Commercial 许可要求（见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)）。
 
 更多文档与发布资料请参阅：

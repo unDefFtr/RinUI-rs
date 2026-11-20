@@ -20,8 +20,18 @@ void teardown_window(QQuickWindow*)
 {
 }
 
+void teardown_windows_and_filters()
+{
+}
+
+void teardown_runtime_services()
+{
+}
+
 void teardown_all()
 {
+    teardown_windows_and_filters();
+    teardown_runtime_services();
 }
 
 void apply_theme(const QString&, const QString&)

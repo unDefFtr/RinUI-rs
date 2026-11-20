@@ -1,9 +1,40 @@
 param(
     [string]$BinaryPath = "target\release\rinui-gallery.exe",
-    [string]$OutputDir = "dist\RinUIGallery-win64"
+    [string]$OutputDir = "dist\RinUIGallery-win64",
+    [switch]$Sign,
+    [string]$CertPfx = "",
+    [string]$CertPassword = "",
+    [string]$CertThumbprint = "",
+    [string]$TimestampUrl = "",
+    [switch]$NoTimestamp
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $CertPfx -and $env:RINUI_WIN_CERT_PFX) {
+    $CertPfx = $env:RINUI_WIN_CERT_PFX
+}
+if (-not $CertPassword -and $env:RINUI_WIN_CERT_PASSWORD) {
+    $CertPassword = $env:RINUI_WIN_CERT_PASSWORD
+}
+if (-not $CertThumbprint -and $env:RINUI_WIN_CERT_THUMBPRINT) {
+    $CertThumbprint = $env:RINUI_WIN_CERT_THUMBPRINT
+}
+if (-not $TimestampUrl -and $env:RINUI_WIN_TIMESTAMP_URL) {
+    $TimestampUrl = $env:RINUI_WIN_TIMESTAMP_URL
+}
+if (-not $TimestampUrl -and -not $NoTimestamp) {
+    $TimestampUrl = "http://timestamp.digicert.com"
+}
+
+if ($Sign) {
+    if (-not $CertPfx -and -not $CertThumbprint) {
+        throw "Authenticode signing requested (-Sign), but neither -CertPfx/RINUI_WIN_CERT_PFX nor -CertThumbprint/RINUI_WIN_CERT_THUMBPRINT was supplied."
+    }
+    if ($CertPfx -and -not (Test-Path -LiteralPath $CertPfx -PathType Leaf)) {
+        throw "Authenticode certificate PFX file not found: $CertPfx"
+    }
+}
 
 if (-not (Test-Path $BinaryPath)) {
     throw "Executable not found at $BinaryPath"
@@ -70,4 +101,64 @@ if (-not $qt5Compat) {
     throw "Qt5Compat\GraphicalEffects QML plugin missing from $OutputDir"
 }
 
-Write-Host "Packaged Windows distribution at $OutputDir"
+function Find-SignTool {
+    $cmd = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+    $kitRoots = @(
+        "${env:ProgramFiles(x86)}\Windows Kits\10\bin",
+        "C:\Program Files\Windows Kits\10\bin"
+    )
+    foreach ($root in $kitRoots) {
+        if (-not (Test-Path -LiteralPath $root)) {
+            continue
+        }
+        $candidate = Get-ChildItem -LiteralPath $root -Recurse -File -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\x64\\" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+        if ($candidate) {
+            return $candidate.FullName
+        }
+    }
+    throw "signtool.exe was not found on PATH or under Windows Kits\10\bin."
+}
+
+if ($Sign) {
+    $signtool = Find-SignTool
+    $signArgs = New-Object System.Collections.Generic.List[string]
+    $signArgs.Add("sign")
+    $signArgs.Add("/fd")
+    $signArgs.Add("SHA256")
+    if ($CertPfx) {
+        $signArgs.Add("/f")
+        $signArgs.Add($CertPfx)
+        if ($CertPassword) {
+            $signArgs.Add("/p")
+            $signArgs.Add($CertPassword)
+        }
+    } elseif ($CertThumbprint) {
+        $signArgs.Add("/sha1")
+        $signArgs.Add($CertThumbprint)
+    }
+    if (-not $NoTimestamp -and $TimestampUrl) {
+        $signArgs.Add("/td")
+        $signArgs.Add("SHA256")
+        $signArgs.Add("/tr")
+        $signArgs.Add($TimestampUrl)
+    }
+    $signArgs.Add($targetExe)
+
+    & $signtool @signArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool sign failed on $targetExe with exit code $LASTEXITCODE"
+    }
+    & $signtool verify /pa $targetExe
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool verify /pa failed on $targetExe with exit code $LASTEXITCODE"
+    }
+    Write-Host "Packaged and Authenticode-signed Windows distribution at $OutputDir"
+} else {
+    Write-Host "Packaged unsigned Windows distribution at $OutputDir (signing skipped; pass -Sign to sign binary)"
+}

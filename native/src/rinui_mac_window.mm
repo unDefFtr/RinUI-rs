@@ -55,6 +55,8 @@ bool interactive_item_at(QQuickItem* item, const QPointF& scene_position)
     return interactive;
 }
 
+void apply_macos_window_style(QQuickWindow* window);
+
 class MacTitleBarInputFilter final : public QObject {
 public:
     explicit MacTitleBarInputFilter(QQuickWindow* window)
@@ -67,6 +69,13 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override
     {
         auto* window = m_window.data();
+        if (window && watched == window
+            && (event->type() == QEvent::Show || event->type() == QEvent::Expose)
+            && window->property("useNativeMacFrame").toBool()
+            && window->property("_rinuiMacFrameDiagnostic").toString()
+                == QStringLiteral("fallback:no_nswindow")) {
+            apply_macos_window_style(window);
+        }
         if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick
             || event->type() == QEvent::NonClientAreaMouseButtonPress) {
             qCDebug(lcMacTitleBar) << "Titlebar input" << event;
@@ -143,6 +152,7 @@ private:
 struct MacWindowState {
     QPointer<QQuickWindow> window;
     QPointer<QObject> input_filter;
+    QMetaObject::Connection visible_conn;
     int offset_x = 10;
     int offset_down = 10;
     bool shift_applied = false;
@@ -330,6 +340,13 @@ void install_ns_window_observers(QQuickWindow* window, NSWindow* ns_window, MacW
     state.observers.push_back(exit_fs_obs);
 }
 
+void set_mac_frame_diagnostic(QQuickWindow* window, const QString& diagnostic)
+{
+    if (window) {
+        window->setProperty("_rinuiMacFrameDiagnostic", diagnostic);
+    }
+}
+
 void apply_macos_window_style(QQuickWindow* window)
 {
     auto it = s_mac_windows.find(window);
@@ -338,11 +355,16 @@ void apply_macos_window_style(QQuickWindow* window)
     }
 
     if (!window->property("useNativeMacFrame").toBool()) {
+        set_mac_frame_diagnostic(window, QStringLiteral("self_drawn:qml_disabled"));
         return;
     }
 
     NSWindow* ns_window = resolve_ns_window(window);
     if (!ns_window) {
+        qCWarning(lcMacTitleBar)
+            << "Native macOS frame requested but NSWindow handle is not ready for" << window
+            << "(QPA:" << QGuiApplication::platformName() << ")";
+        set_mac_frame_diagnostic(window, QStringLiteral("fallback:no_nswindow"));
         return;
     }
 
@@ -356,6 +378,8 @@ void apply_macos_window_style(QQuickWindow* window)
     apply_appearance_to_ns_window(ns_window, s_last_actual_theme, s_last_configured_theme);
     install_ns_window_observers(window, ns_window, *it);
     schedule_traffic_light_shift(window, 0);
+    set_mac_frame_diagnostic(window, QStringLiteral("native_cocoa"));
+    qCInfo(lcMacTitleBar) << "Applied native macOS NSWindow frame for" << window;
 }
 
 } // namespace
@@ -378,17 +402,32 @@ void setup_window(QQuickWindow* window, bool native_mac_frame, int offset_x, int
 
     if (!native_mac_frame) {
         if (window->property("useNativeMacFrame").toBool()) {
+            qCWarning(lcMacTitleBar)
+                << "Overriding QML useNativeMacFrame=true to self-drawn mode post-load for"
+                << window;
             window->setProperty("useNativeMacFrame", false);
+            set_mac_frame_diagnostic(window, QStringLiteral("self_drawn:overridden_post_load"));
+        } else {
+            set_mac_frame_diagnostic(window, QStringLiteral("self_drawn"));
         }
         return;
     }
 
     if (!is_cocoa_platform()) {
-        // Headless/offscreen QPA platforms do not back WId with NSView*.
+        // Headless/offscreen QPA platforms do not back WId with NSView*. Keep useNativeMacFrame
+        // intact so QML bindings (such as FluentWindow.titleBarHeight) remain inspectable.
+        qCWarning(lcMacTitleBar)
+            << "Native macOS frame requested under non-cocoa QPA platform"
+            << QGuiApplication::platformName() << "for" << window;
+        set_mac_frame_diagnostic(window, QStringLiteral("fallback:non_cocoa_qpa"));
         return;
     }
 
     if (!window->property("useNativeMacFrame").toBool()) {
+        qCInfo(lcMacTitleBar)
+            << "QML window opted out of useNativeMacFrame; keeping self-drawn mode for"
+            << window;
+        set_mac_frame_diagnostic(window, QStringLiteral("self_drawn:qml_disabled"));
         return;
     }
 
@@ -398,10 +437,9 @@ void setup_window(QQuickWindow* window, bool native_mac_frame, int offset_x, int
         state.input_filter = new MacTitleBarInputFilter(window);
         state.offset_x = offset_x;
         state.offset_down = offset_down;
-        s_mac_windows.insert(window, std::move(state));
 
         QPointer<QQuickWindow> safe_win(window);
-        QObject::connect(window, &QQuickWindow::visibleChanged, window, [safe_win](bool visible) {
+        state.visible_conn = QObject::connect(window, &QQuickWindow::visibleChanged, window, [safe_win](bool visible) {
             if (safe_win.isNull() || !visible) {
                 return;
             }
@@ -415,6 +453,7 @@ void setup_window(QQuickWindow* window, bool native_mac_frame, int offset_x, int
                 apply_macos_window_style(safe_win.data());
             }
         });
+        s_mac_windows.insert(window, std::move(state));
     } else {
         auto it = s_mac_windows.find(window);
         it->offset_x = offset_x;
@@ -430,18 +469,38 @@ void teardown_window(QQuickWindow* window)
     if (it == s_mac_windows.end()) {
         return;
     }
+    if (it->visible_conn) {
+        QObject::disconnect(it->visible_conn);
+        it->visible_conn = QMetaObject::Connection{};
+    }
     remove_observers(*it);
     delete it->input_filter.data();
     s_mac_windows.erase(it);
 }
 
-void teardown_all()
+void teardown_windows_and_filters()
 {
     for (auto it = s_mac_windows.begin(); it != s_mac_windows.end(); ++it) {
+        if (it->visible_conn) {
+            QObject::disconnect(it->visible_conn);
+            it->visible_conn = QMetaObject::Connection{};
+        }
         remove_observers(*it);
         delete it->input_filter.data();
     }
     s_mac_windows.clear();
+}
+
+void teardown_runtime_services()
+{
+    s_last_actual_theme = QStringLiteral("Light");
+    s_last_configured_theme = QStringLiteral("Auto");
+}
+
+void teardown_all()
+{
+    teardown_windows_and_filters();
+    teardown_runtime_services();
 }
 
 void apply_theme(const QString& actual_theme, const QString& configured_theme)

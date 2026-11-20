@@ -1,11 +1,12 @@
 use crate::bridge::ffi as qt_bridge;
+use crate::runtime::{enter_qml_exec_from_theme_slot, QmlExecGuard, RuntimeCore};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use rinui_platform::{BackdropEffect, ConfigStore, PlatformCapabilities, ResolvedTheme, ThemeMode};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use tracing::{debug, error, warn};
 
 fn guard_ffi<R>(op: &'static str, fallback: R, f: impl FnOnce() -> R) -> R {
@@ -32,6 +33,7 @@ pub mod qobject {
 
         pub fn rinui_theme_manager_new() -> UniquePtr<ThemeManager>;
         pub fn rinui_connect_color_scheme_changed(manager: Pin<&mut ThemeManager>);
+        pub fn rinui_disconnect_color_scheme_changed();
     }
 
     extern "RustQt" {
@@ -80,15 +82,89 @@ pub use qobject::ThemeManager;
 #[derive(Default)]
 pub struct ThemeManagerRust {
     store: Option<Rc<RefCell<ConfigStore>>>,
+    borrow_state: Option<Rc<Cell<isize>>>,
+    mut_slot_active: Rc<Cell<bool>>,
+    runtime_core: Option<Weak<RuntimeCore>>,
     fallback_theme: ThemeMode,
     fallback_color: String,
     fallback_backdrop: BackdropEffect,
 }
 
+struct ThemeSlotWriteGuard {
+    borrow_state: Option<Rc<Cell<isize>>>,
+    mut_slot_active: Rc<Cell<bool>>,
+    reset_on_drop: bool,
+}
+
+impl Drop for ThemeSlotWriteGuard {
+    fn drop(&mut self) {
+        self.mut_slot_active.set(false);
+        if self.reset_on_drop {
+            if let Some(state) = &self.borrow_state {
+                state.set(0);
+            }
+        }
+    }
+}
+
 impl ThemeManager {
-    /// Attach the shared `ConfigStore` owned by `RinUIHost`.
+    /// Attach the shared `ConfigStore` owned by `RinUIHost` / `RinUIRuntime`.
     pub(crate) fn attach_store(mut self: Pin<&mut Self>, store: Rc<RefCell<ConfigStore>>) {
         self.as_mut().rust_mut().store = Some(store);
+    }
+
+    /// Attach runtime borrow-state cell and weak core reference for QML slot re-entrancy guards.
+    pub(crate) fn attach_runtime_guards(
+        mut self: Pin<&mut Self>,
+        borrow_state: Rc<Cell<isize>>,
+        runtime_core: Weak<RuntimeCore>,
+    ) {
+        let mut rust = self.as_mut().rust_mut();
+        rust.borrow_state = Some(borrow_state);
+        rust.runtime_core = Some(runtime_core);
+    }
+
+    fn enter_slot_write(&self, op: &'static str) -> Option<ThemeSlotWriteGuard> {
+        if self.rust().mut_slot_active.get() {
+            error!(
+                operation = op,
+                "Refusing recursive ThemeManager mutating slot re-entry"
+            );
+            return None;
+        }
+        let mut_slot_active = Rc::clone(&self.rust().mut_slot_active);
+        let Some(state) = self.rust().borrow_state.clone() else {
+            mut_slot_active.set(true);
+            return Some(ThemeSlotWriteGuard {
+                borrow_state: None,
+                mut_slot_active,
+                reset_on_drop: false,
+            });
+        };
+        let cur = state.get();
+        if cur > 0 {
+            error!(
+                operation = op,
+                readers = cur,
+                "Refusing ThemeManager mutation while shared ThemeManagerRef borrow is active"
+            );
+            return None;
+        }
+        let reset_on_drop = cur == 0;
+        if reset_on_drop {
+            state.set(-1);
+        }
+        mut_slot_active.set(true);
+        Some(ThemeSlotWriteGuard {
+            borrow_state: Some(state),
+            mut_slot_active,
+            reset_on_drop,
+        })
+    }
+
+    fn enter_qml_signal_exec(&self) -> Option<QmlExecGuard> {
+        let core = self.rust().runtime_core.as_ref()?.upgrade()?;
+        Some(enter_qml_exec_from_theme_slot(core))
     }
 
     /// Apply current theme and backdrop state to registered native windows without changing config.
@@ -161,6 +237,11 @@ impl ThemeManager {
     /// Upstream slot: switch between `"Auto"`, `"Light"`, and `"Dark"`.
     pub fn toggle_theme(mut self: Pin<&mut Self>, theme: QString) {
         guard_ffi("toggle_theme", (), move || {
+            let _exec_guard = self.enter_qml_signal_exec();
+            let Some(_slot_guard) = self.enter_slot_write("toggle_theme") else {
+                return;
+            };
+
             let theme_str = theme.to_string();
             let Ok(mode) = ThemeMode::parse_str(&theme_str) else {
                 warn!(theme = %theme_str, "Ignoring invalid RinUI theme mode");
@@ -217,6 +298,11 @@ impl ThemeManager {
     /// non-Windows platform or when no RinUI windows are currently registered.
     pub fn apply_backdrop_effect(mut self: Pin<&mut Self>, effect_type: QString) -> i32 {
         guard_ffi("apply_backdrop_effect", -2, move || {
+            let _exec_guard = self.enter_qml_signal_exec();
+            let Some(_slot_guard) = self.enter_slot_write("apply_backdrop_effect") else {
+                return -2;
+            };
+
             self.sync_platform_appearance();
 
             let requested_str = effect_type.to_string();
@@ -305,6 +391,9 @@ impl ThemeManager {
     /// Upstream slot: persist accent hex color.
     pub fn set_theme_color(mut self: Pin<&mut Self>, color: QString) {
         guard_ffi("set_theme_color", (), move || {
+            let Some(_slot_guard) = self.enter_slot_write("set_theme_color") else {
+                return;
+            };
             let color_str = color.to_string();
             if let Some(store) = self.rust().store.clone() {
                 match store.try_borrow_mut() {
@@ -333,6 +422,11 @@ impl ThemeManager {
     /// Invoked via `QStyleHints::colorSchemeChanged` on the Qt GUI thread.
     pub fn handle_system_theme_changed(mut self: Pin<&mut Self>) {
         guard_ffi("handle_system_theme_changed", (), move || {
+            let _exec_guard = self.enter_qml_signal_exec();
+            let Some(_slot_guard) = self.enter_slot_write("handle_system_theme_changed") else {
+                return;
+            };
+
             self.sync_platform_appearance();
             if self.configured_theme() == ThemeMode::Auto {
                 let actual = self.resolved_theme();

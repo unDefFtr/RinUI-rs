@@ -204,3 +204,256 @@ Re-validated locally on macOS arm64 after `515172d`/`60ca934` (`Qt 6.12.0` Homeb
 2. Any prebuilt public binaries include Qt 6 LGPLv3 dynamic-linking compliance disclosures ([`docs/packaging-and-licensing.md`](packaging-and-licensing.md)).
 3. Interactive desktop visual spot-checks (and Gallery screenshots) are completed by a maintainer on physical macOS/Windows/Linux desktops if releasing public binary installers, and `phase2-validation` is merged to `main` prior to manually tagging `v0.1.0-alpha.1`.
 4. **No Git tag, crate publish, or GitHub Release has been executed automatically.**
+
+---
+
+## 8. Upstream Parity & Post-Review Validation (Stages A–G + Review Fixes, `2026-11-20`)
+
+Post-baseline upstream parity work and subsequent independent-review fixes (P1 QML callback self/peer Session drop safety, P1 Shared-engine dynamic window ownership + `register_window_from_property()`, P1 `ThemeManagerRef`/`ThemeManagerMut` reader-writer borrow protection & slot re-entrancy guards, and P2 live locale updates on pre-existing `Calendar`/`CalendarDatePicker`/`DatePicker`/`SpinBox` controls) were validated locally on **macOS arm64** (`Qt 6.12.0` in `/opt/homebrew/lib`, `rustc 1.97.1 (8bab26f4f 2026-07-14)`). `upstream/Rin-UI` remained untouched at `46d77fa8371ff0e9f46a10a2eb66612dab123269`.
+
+### 8.1 Executed & Passed Checks After Review Fixes (Local macOS `Qt 6.12.0`)
+
+| Layer / Check | Command | Observed Result |
+|---|---|---|
+| Audit | `python3 scripts/audit_upstream.py` | **PASSED** (`115` runtime files, `23` QML host context refs, clean submodule) |
+| Format | `cargo fmt --all -- --check` | **PASSED** |
+| Lint (Default) | `cargo clippy --workspace --all-targets --offline -- -D warnings` | **PASSED** |
+| Lint (`qt-widgets-test`) | `cargo clippy -p rinui-host --features qt-widgets-test --all-targets --offline -- -D warnings` | **PASSED** |
+| Layer 1 (`offscreen` workspace) | `QT_QPA_PLATFORM=offscreen cargo test --workspace --offline` | **PASSED**: `rinui-platform` (`10 passed`), `rinui-host` unit (`2 passed`), integration suites (`core_app_rejection`, `embedded_runtime`, `filesystem_dev_mode`, `hardening`, `i18n_semantics`, `object_interop`, `parity_review_regressions` [12 isolated subprocess workers], `runtime_sessions` all passed), `rinui-gallery` `standalone_packaging` (`2 passed`) |
+| Layer 1 (Qt Widgets adoption) | `QT_QPA_PLATFORM=offscreen cargo test -p rinui-host --features qt-widgets-test --test external_qapplication --offline` | **PASSED** (`external_qapplication integration tests passed.`) |
+| Layer 1 (Review regressions, subprocess + timeout) | `QT_QPA_PLATFORM=offscreen cargo test -p rinui-host --test parity_review_regressions --offline` | **PASSED** (`12/12` isolated subprocess workers: `load-drop`, `load-drop-shared`, `property-drop`, `translation-drop`, `event-drop-process`, `event-drop-exec`, `event-nested-prop-drop`, `theme-signal-drop`, `ownership`, `theme-alias`, `locale-live-embedded`, `locale-live-dev`) |
+| Layer 1 (`EngineConfigurator` demo) | `QT_QPA_PLATFORM=offscreen cargo run -p rinui-host --example engine_config_demo --offline` | **PASSED** (`Demo result: titleProp=EngineConfigDemo Title, addInts(10,32)=42, typedRepeat=RinUI!RinUI!`) |
+
+Prior to the 4 review fixes (same `Qt 6.12.0` / `2026-11-20` baseline; release `.app` bundle rebuild remains clean to re-run after final fixes):
+- `QT_QPA_PLATFORM=offscreen cargo run -p rinui-gallery --offline -- --dev --smoke-test --config-dir <tmp>` (**PASSED**)
+- `cargo build --release -p rinui-gallery --offline` + `strings` dev-path check (**PASSED**: `0` `rinui-rs/{upstream,crates,examples}` dev paths)
+- `scripts/package_macos.sh` syntax (`bash -n`), `--help`, negative `--notarize` CLI checks (**PASSED**) and isolated `QT_QPA_PLATFORM=cocoa ./RinUIGallery.app/Contents/MacOS/RinUIGallery --smoke-test` in both default self-drawn (`mac_diagnostic=self_drawn`) and `--upstream-mac-frame` (`mac_diagnostic=native_cocoa`) modes (**PASSED**).
+
+### 8.2 Not Executed on Local Host (`未执行` / External Blockers)
+
+| Item | Status | Missing Prerequisites | Exact Reproduction Command(s) |
+|---|---|---|---|
+| Windows CI / MSVC build & `windeployqt` `windows` QPA smoke | **未执行** (post-parity) | Windows 10/11 host or GitHub `windows-latest` runner with MSVC 2022, Qt 6.9+ (`qt5compat`, `qtshadertools`), `windeployqt` | Push branch to trigger `.github/workflows/ci.yml` (`windows-latest`), or run `.\scripts\package_windows.ps1` then `QT_QPA_PLATFORM=windows .\rinui-gallery.exe --smoke-test --config-dir <tmp>` |
+| Unsigned MSIX pack & `MakeAppx unpack` layout verification | **未执行** (local macOS) | Windows 10/11 SDK (`makeappx.exe`) on Windows | `.\scripts\package_msix.ps1 -SourceDirectory dist\RinUIGallery-win64 -OutputDirectory dist\msix -SkipSign -VerifyLayout` |
+| Windows MSIX installation, launch & uninstall | **未执行** | Physical/VM Windows 10/11 desktop + trusted signing cert | Sign with `-CertPfx`/`-CertThumbprint`, install `.msix`, launch from Start Menu, uninstall cleanly |
+| Windows Desktop Visual QA (Win10 Acrylic & disable, Win11 21H2 fallback, 22H2+ Mica/Acrylic/Tabbed, Snap Layouts, auto-hide taskbar, cross-DPI) | **未执行** | Physical Windows 10 + Windows 11 21H2/22H2+ desktops | Launch Gallery on target Windows desktops and exercise Theme/Backdrop, maximize, drag across DPI displays |
+| Linux CI (`lld`, `package_linux.sh`, headless `xvfb-xcb`) | **未执行** (post-parity) | Linux host or GitHub `ubuntu-latest` runner with Qt 6, `lld`, `xvfb` | Push branch to trigger `.github/workflows/ci.yml` (`ubuntu-latest`), or `./scripts/package_linux.sh` + `xvfb-run -a env QT_QPA_PLATFORM=xcb ./run-gallery.sh --smoke-test` |
+| Linux Desktop QA (real X11 WM + native Wayland compositor) | **未执行** | Interactive Linux X11 WM & Wayland desktop sessions | Run packaged Gallery on native X11 WM and Wayland (`QT_QPA_PLATFORM=wayland`), verify move/resize/maximize and `-2` backdrop fallback |
+| macOS interactive physical-mouse QA (post-parity) | **未执行** | Interactive human GUI inspection on macOS desktop | Launch `RinUIGallery.app` in default and `--upstream-mac-frame` modes; verify drag, double-click, search field, back button, traffic-light geometry, fullscreen exit recovery |
+| Apple Developer ID signing / Gatekeeper notarization & Windows Authenticode signing | **未执行** | Apple Developer ID cert + App Store Connect keychain notary profile; Windows Authenticode PFX/store cert | `./scripts/package_macos.sh --sign-identity "<ID>" --notarize --notary-profile "<PROFILE>"`; `.\scripts\package_windows.ps1 -Sign ...`; `.\scripts\package_msix.ps1 ...` |
+
+
+## 9. Second-Round P1 Lifecycle Validation (2026-11-20)
+
+This section records the second lifecycle pass; section 8 is the earlier review pass. The later nested-event-processing gap and its follow-up validation are recorded in section 10; these 20-worker results did not cover that path. Local host: macOS arm64, Qt **6.12.0**, rustc **1.97.1 (8bab26f4f 2026-07-14)**. No commit, reset, push, publish or release was performed. Neither upstream nor the user-owned `mtktools/` and `skills/` directories were edited.
+
+### Fixes and cleanup contract
+
+1. **External event processing Session self-drop**: `app.process_events()` can invoke QML with no `QmlExecGuard` and `loopLevel() == 0`. Session drop now always detaches its roots/windows and uses `deleteLater()`, always queues Private engines, and performs no synchronous window hide/releaseResources or deferred-delete flush. Handles return `HostDisposed` immediately; sibling sessions remain callable and QML executes the following `Relay.trigger("after")`.
+2. **Last Runtime owner in a callback**: borrowed Runtime destruction is two-phase. It unregisters and saves configuration, detaches owned windows/translators/signals, restores borrowed state, and transfers retained engines, ThemeManager and RuntimeActiveGuard to `PENDING_RUNTIME_TEARDOWNS`. A safe drain flushes deletes while GUI-alive, drops engines, flushes, releases filters then services, drops ThemeManager, flushes, then releases the runtime reservation. Cache/GC calls are skipped once the GUI application is gone.
+
+A coalesced zero-delay timer drains idle live runtimes and pending teardowns. Global QML/theme guard counters prevent unsafe normal drains; aboutToQuit and qAddPostRoutine cover event-loop exit and app destruction. Post routines do not reschedule. A borrowed app must drain its external event loop before a subsequent attach; pending cleanup retains `RUNTIME_ACTIVE` and returns `ApplicationAlreadyInitialized`. Normal `drop(app)` completes the fallback even without further process_events; abrupt process exit cannot run destructors. App lifetime and GUI-thread requirements still apply, including the raw API contract.
+
+### Current command results
+
+C++ completion preceded runtime changes; the host build passed before running any regression worker. Formatting was applied before the ordered audit/fmt/lint/test checks. Cargo uses offline mode (global `cargo --offline fmt` for formatting); Qt tests use `QT_QPA_PLATFORM=offscreen`.
+
+| Command | Result in this pass |
+|---|---|
+| `cargo build --offline -p rinui-host` | **PASSED** |
+| `cargo --offline fmt --all` | **PASSED** |
+| `python3 scripts/audit_upstream.py` | **PASSED**, 115 runtime files, 23 context references, clean pinned upstream |
+| `cargo --offline fmt --all -- --check` | **PASSED** |
+| `cargo clippy --workspace --all-targets --offline -- -D warnings` | **PASSED** |
+| `cargo clippy -p rinui-host --features qt-widgets-test --all-targets --offline -- -D warnings` | **PASSED** |
+| `QT_QPA_PLATFORM=offscreen cargo test --workspace --offline` | **PASSED**: 2 Gallery standalone tests, 2 host unit tests, all eight host integration programs (including 20/20 parity workers), 10 platform tests and doc tests |
+| `QT_QPA_PLATFORM=offscreen cargo test -p rinui-host --offline --features qt-widgets-test --test external_qapplication` | **PASSED**, external QApplication and caller widget remain usable |
+| `git diff --check` | **PASSED**, no output |
+| `git -C upstream/Rin-UI status --porcelain` | **PASSED**, empty |
+
+Build output included the existing Xcode ranlib empty-archive warning for generated CXX-Qt init archives; both Clippy commands still exited 0 with `-D warnings`. The Qt Widgets test link also warned that a duplicate Homebrew rpath was ignored; it exited 0. Command logs for this run are in `/private/tmp/rinui-lifecycle-validation/` (local temporary evidence, not a repository artifact).
+
+### Isolated worker results
+
+`QT_QPA_PLATFORM=offscreen cargo test -p rinui-host --offline --test parity_review_regressions`: **PASSED, 20/20**, one subprocess and a 20-second timeout per mode. Every new worker asserts continued JS, immediate `HostDisposed`, a successful sibling method call after self-drop, pending resource retention inside the callback, eventual deletion of filesystem `dev_load_root` paths, blocked premature attachment and successful subsequent attachment, and normal application destruction. The safe-attach fixture owns its app until all callback captures and borrowed values have dropped; raw fixtures obey the same lifetime boundary. The app-drop worker reattaches to a newly constructed external app after the original app is destroyed.
+
+| Worker | Observed result | Coverage |
+|---|---|---|
+| `load-drop` | PASSED | Existing load self-drop |
+| `load-drop-shared` | PASSED | Existing Shared-engine load self-drop |
+| `property-drop` | PASSED | Existing property callback |
+| `translation-drop` | PASSED | Existing translation callback |
+| `event-drop-process` | PASSED | Existing host process_events |
+| `event-drop-exec` | PASSED | Existing host exec |
+| `event-nested-prop-drop` | PASSED | Existing nested property callback |
+| `theme-signal-drop` | PASSED | Existing ThemeManager signal |
+| `ownership` | PASSED | Shared window ownership and explicit registration |
+| `theme-alias` | PASSED | ThemeManager readers/writer and slot protection |
+| `locale-live-embedded` | PASSED | Existing embedded live locale switching |
+| `locale-live-dev` | PASSED | Existing filesystem live locale switching |
+| `external-process-safe` | PASSED | Safe attach, direct external process_events |
+| `external-process-nested-prop-drop` | PASSED | Safe attach, nested property callback and continued inner/outer JS |
+| `external-exec-last-private` | PASSED | Private engines, Session then Runtime, external exec |
+| `external-exec-last-reversed` | PASSED | Runtime then Sessions, schedule_quit(0) queued before drain, aboutToQuit |
+| `external-exec-last-shared` | PASSED | Last Shared engine under external exec |
+| `external-process-last-private` | PASSED | Last Private engines under external process_events |
+| `external-process-last-shared-reversed` | PASSED | Shared engine, reversed ownership release |
+| `external-process-last-app-drop` | PASSED | No further process_events, pending views deleted by app post routine, reservation released |
+
+The first expanded-suite run stopped at the Shared fixture's QML loading stage (`File name case mismatch`): its second QML file was written after the shared engine cached the directory. Both files are now materialized before either load; the subsequent 20-worker run passed. No worker timed out or SIGABRTed in these runs.
+
+### Not executed in this pass / remaining limits
+
+- Windows/Linux builds, CI and physical desktop validation: **未执行**. Local macOS offscreen results do not validate those platforms or native visual behavior.
+- MSIX packing, installation, startup and uninstall: **未执行**; requires Windows SDK and a suitable Windows host/certificate.
+- Apple Developer ID / Gatekeeper notarization and Windows Authenticode signing: **未执行**, no signing credentials used.
+- Release rebuilds, release-bundle packaging/native Cocoa isolated startup, interactive Cocoa QA and the standalone engine_config_demo command: **未执行 in this pass**. Earlier evidence remains historical.
+- The external application must remain alive through all borrowed Runtime/Session/Handle lifetimes and pending teardown until it drains or completes normal destruction. No leak-free cleanup guarantee is possible for process::exit/abort.
+
+
+## 10. Nested External Event Processing P1 Follow-Up (2026-11-20)
+
+Historical 22-worker pass: it did not cover direct nested external app pumping. The subsequent defect and current validation are recorded in section 11.
+
+The second-round claim was incomplete: the user subsequently reproduced SIGABRT with safe `attach_existing`, a QML Timer dropping its own Private Session, and the same callback calling a surviving Runtime's `process_events()`. The external application remained alive. Both Runtime and Session `process_events()` performed an extra synchronous flush after their QmlExecGuard dropped solely because `loopLevel() == 0`. An externally driven outer QML callback can still be executing at that point.
+
+Removed those two supplemental flushes. QmlExecGuard release already calls `finish_deferred_work_or_schedule`: borrowed apps only schedule, and standalone apps retain synchronous flushing on outermost guard exit outside an event loop. Pending drain callbacks dispatched by a nested host pump see its active execution guard and reschedule. This follow-up does not change the two-phase Runtime teardown or its aboutToQuit / qAddPostRoutine fallbacks.
+
+Two new safe-attach subprocess workers retain the original 20 workers and 20-second timeout per process:
+
+| Worker | Result in this follow-up | Required behavior |
+|---|---|---|
+| `external-process-nested-pump` | PASSED | After self-drop, call Runtime process_events three times on the same QML callback stack |
+| `external-process-nested-pump-session` | PASSED | After self-drop, call surviving sibling Session process_events three times on that stack |
+
+Each checks the dropped engine's resource view still exists after every nested call, the callback finishes, subsequent JS executes, handles immediately return HostDisposed and the sibling remains callable. After the outer callback returns, direct external event processing must reclaim the dropped Private engine while the Runtime and sibling are still alive. This prevents final Runtime teardown from masking a stuck drain. Final resource removal, reattachment and normal app destruction remain required.
+
+### Worker results from this follow-up
+
+All **22/22** subprocess workers passed in the workspace run, with no timeout or SIGABRT:
+
+| Worker | Result |
+|---|---|
+| `load-drop` | PASSED |
+| `load-drop-shared` | PASSED |
+| `property-drop` | PASSED |
+| `translation-drop` | PASSED |
+| `event-drop-process` | PASSED |
+| `event-drop-exec` | PASSED |
+| `event-nested-prop-drop` | PASSED |
+| `theme-signal-drop` | PASSED |
+| `ownership` | PASSED |
+| `theme-alias` | PASSED |
+| `locale-live-embedded` | PASSED |
+| `locale-live-dev` | PASSED |
+| `external-process-safe` | PASSED |
+| `external-process-nested-prop-drop` | PASSED |
+| `external-process-nested-pump` | PASSED |
+| `external-process-nested-pump-session` | PASSED |
+| `external-exec-last-private` | PASSED |
+| `external-exec-last-reversed` | PASSED |
+| `external-exec-last-shared` | PASSED |
+| `external-process-last-private` | PASSED |
+| `external-process-last-shared-reversed` | PASSED |
+| `external-process-last-app-drop` | PASSED |
+
+### Commands run for this follow-up
+
+Local macOS arm64 / Qt 6.12.0 / rustc 1.97.1. Cargo runs offline; Qt tests use offscreen. New logs are in `/private/tmp/rinui-nested-pump-validation/`; section 9's logs describe the preceding pass.
+
+| Command | Result |
+|---|---|
+| `cargo --offline fmt --all` | PASSED |
+| `cargo build --offline -p rinui-host` | PASSED |
+| `python3 scripts/audit_upstream.py` | PASSED, 115 files / 23 context references, pinned upstream clean |
+| `cargo --offline fmt --all -- --check` | PASSED |
+| `cargo clippy --workspace --all-targets --offline -- -D warnings` | PASSED |
+| `cargo clippy -p rinui-host --features qt-widgets-test --all-targets --offline -- -D warnings` | PASSED |
+| `QT_QPA_PLATFORM=offscreen cargo test --workspace --offline` | PASSED: 22/22 workers, all eight host integration programs, 2 host unit / 10 platform / 2 Gallery standalone tests, and doc tests |
+| `QT_QPA_PLATFORM=offscreen cargo test -p rinui-host --offline --features qt-widgets-test --test external_qapplication` | PASSED |
+| `git diff --check` | PASSED, no output |
+| `git -C upstream/Rin-UI status --porcelain` | PASSED, empty |
+
+Builds retained the generated CXX-Qt init archive ranlib warning; the Qt Widgets test linker also ignored a duplicate Homebrew rpath. Both Clippy checks and all tests exited 0.
+
+Windows/Linux builds and physical desktop checks, MSIX packaging/install/startup, Developer ID / Authenticode signing, release packaging/native Cocoa startup and the standalone engine_config_demo command remain **未执行 in this follow-up**. Borrowed apps must still drain after the outer callback returns before reattachment, or complete normal application destruction. Abrupt process termination cannot execute cleanup hooks. No reset, commit, push or publication is authorized or performed; upstream, mtktools and skills remain untouched.
+
+
+## 11. Direct External App Pump / Qt DeferredDelete Follow-Up (2026-11-20)
+
+The user reproduced a remaining SIGABRT with safe attach_existing, self-drop of a Private Session in a Timer callback, and direct external app.process_events in that same callback. The external app remained alive. Sections 9–10 did not establish safety for that path: a queued timer could run without a host guard and force global deletion while the original QML handler was still active.
+
+### Implementation and driver contract
+
+- C++ creates one EngineDropFence QObject for each borrowed Private engine queued for destruction, and for a shared engine entering pending Runtime teardown. Its deleteLater event carries Qt's own scope/loop rules. The engine becomes ready only upon actual DeferredDelete delivery; the marker is deleted before its Rust continuation runs. Engine unregister cancels any outstanding marker and removes its ready entry.
+- Normal Rust drains select only ready engines, with no forced global DeferredDelete flush for borrowed apps. Pending Runtime teardown waits for all retained engine markers. Existing QML/theme guards remain additional protection, and qAddPostRoutine still completes final destruction without another event pump. Old queued wakeups cannot destroy newer unqualified engines.
+- The external manual driver has an explicit Qt requirement: processEvents alone does not automatically dispatch every DeferredDelete (including events posted outside exec/notification delivery). At an outer boundary after callbacks return, use QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete). This is standard Qt event driving, not a guessed-safe timer callback. It must not be forced from the nested QML handler. Without a driver dispatch/exec, cleanup may wait until normal app destruction. Reference: [Qt QObject::deleteLater](https://doc.qt.io/qt-6/qobject.html#deleteLater); the Qt 6.12 source was also inspected for its loop/scope checks.
+- Test driver adjustment is explicit: the safe external workers explicitly dispatch DeferredDeletes only after the QML callback returns, including reclamation while the Runtime/sibling remain alive; runtime_sessions does the same before sequential reattachment. The test-only forced-dispatch binding is explicitly unsafe: its caller must establish that no Qt/QML callback remains on the stack. Their lifecycle assertions and existing modes remain. No RinUI guard or forced flush surrounds the new nested app call. This corrects the earlier assumption that process_events alone would always finish external teardown.
+
+### Regression coverage
+
+Retained all 22 worker modes, adding three 20-second subprocess workers:
+
+| Worker | Result | Coverage |
+|---|---|---|
+| external-process-nested-app-pump | PASSED | Safe attach, self-drop, three direct app pumps in the same callback, continued JS; reclaim target while Runtime/sibling remain alive |
+| external-process-nested-app-pump-last-private | PASSED | Drop Private Sessions and final Runtime, then three direct app pumps before QML returns |
+| external-process-nested-app-pump-last-shared | PASSED | Same pending teardown path for the shared Engine |
+
+Each checks resource retention after every nested call, immediate HostDisposed, sibling calls before sibling release, subsequent JS, final resource removal, blocked premature attach, eventual reattachment and normal app destruction. The original post-routine worker still performs no further event/DeferredDelete dispatch after its callback.
+
+The first fence-based suite attempt did not abort, but the new direct-app worker reached its five-second resource-reclamation deadline. A backtrace isolated this to the second pump, after the continued-JS flag was already set. Work was stopped for a plan review: on this manual Cocoa/offscreen driver, recursive processing left DeferredDeletes pending even after callback return. The outer driver now explicitly dispatches them at that point. The in-callback direct app pump and resource-retention assertions were not weakened, and no RinUI guard was added.
+
+### Final workspace worker results
+
+Each worker below exited successfully in the final workspace run; each retains its 20-second subprocess limit.
+
+| Worker | Result |
+|---|---|
+| load-drop | PASSED |
+| load-drop-shared | PASSED |
+| property-drop | PASSED |
+| translation-drop | PASSED |
+| event-drop-process | PASSED |
+| event-drop-exec | PASSED |
+| event-nested-prop-drop | PASSED |
+| theme-signal-drop | PASSED |
+| ownership | PASSED |
+| theme-alias | PASSED |
+| locale-live-embedded | PASSED |
+| locale-live-dev | PASSED |
+| external-process-safe | PASSED |
+| external-process-nested-prop-drop | PASSED |
+| external-process-nested-pump | PASSED |
+| external-process-nested-pump-session | PASSED |
+| external-process-nested-app-pump | PASSED |
+| external-process-nested-app-pump-last-private | PASSED |
+| external-process-nested-app-pump-last-shared | PASSED |
+| external-exec-last-private | PASSED |
+| external-exec-last-reversed | PASSED |
+| external-exec-last-shared | PASSED |
+| external-process-last-private | PASSED |
+| external-process-last-shared-reversed | PASSED |
+| external-process-last-app-drop | PASSED |
+
+### Current checks
+
+Local macOS arm64 / Qt 6.12.0. Logs for final lint/test commands: `/private/tmp/rinui-qt-deferred-delete-validation/`. All Cargo dependency operations use --offline; Qt tests use QT_QPA_PLATFORM=offscreen.
+
+| Check | Result |
+|---|---|
+| Host build after C++/Rust changes | PASSED |
+| Formatting applied | PASSED |
+| 25-worker parity suite | PASSED, 25/25; no SIGABRT or subprocess timeout in the successful run |
+| Upstream audit | PASSED, 115 files / 23 context refs / pinned clean upstream |
+| Format check | PASSED |
+| Workspace Clippy | PASSED: cargo clippy --workspace --all-targets --offline -- -D warnings |
+| Qt Widgets Clippy | PASSED: cargo clippy -p rinui-host --features qt-widgets-test --all-targets --offline -- -D warnings |
+| Workspace tests | PASSED: QT_QPA_PLATFORM=offscreen cargo test --workspace --offline; includes 25/25 workers, runtime_sessions, hardening and object_interop |
+| external_qapplication | PASSED: QT_QPA_PLATFORM=offscreen cargo test -p rinui-host --offline --features qt-widgets-test --test external_qapplication |
+| git diff --check | PASSED, empty |
+| Final upstream status | PASSED: git -C upstream/Rin-UI status --porcelain, empty |
+
+The generated CXX-Qt init archives retained the ranlib empty-symbol-table warning. The Widgets test linker also ignored a duplicate Homebrew rpath; expected QML fixture/font diagnostics remain. Both Clippy commands and both final test commands exited 0.
+
+Windows/Linux builds and physical desktop checks, MSIX packaging/install/startup, Developer ID / Authenticode signing, release packaging/native Cocoa startup and the standalone engine_config_demo command remain **未执行 in this follow-up**. No reset, commit, push or publication is performed; upstream, mtktools and skills are not edited.

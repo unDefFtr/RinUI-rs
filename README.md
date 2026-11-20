@@ -8,19 +8,21 @@ Independent, reusable Rust + C++/Objective-C++ Qt 6 host library for the upstrea
 
 ## Key Capabilities
 
-- **Unmodified Upstream Submodule**: `upstream/Rin-UI` stays untouched (`46d77fa8371ff0e9f46a10a2eb66612dab123269`). Broken upstream `qmldir` declarations are sanitized at build time inside `$OUT_DIR/rinui_sanitized/`.
-- **Full `RinUI` QML Contract**: Exposes `ThemeManager` (signals `themeChanged`, `backdropChanged`; slots `toggle_theme`, `get_theme`, `get_theme_name`, `apply_backdrop_effect`, `get_backdrop_effect`, `set_theme_color`, `get_theme_color`) and `WinEventManager` on Windows.
+- **Unmodified Upstream Submodule**: `upstream/Rin-UI` stays untouched (`46d77fa8371ff0e9f46a10a2eb66612dab123269`). Broken upstream `qmldir` declarations are sanitized identically at build time (`$OUT_DIR/rinui_sanitized/`) and at dev-mode launch (`ResourceView` / `GalleryDevView` staging views) via one shared sanitizer module.
+- **Full `RinUI` QML Contract**: Exposes `ThemeManager` (signals `themeChanged`, `backdropChanged`; slots `toggle_theme`, `get_theme`, `get_theme_name`, `apply_backdrop_effect`, `get_backdrop_effect`, `set_theme_color`, `get_theme_color`), `WinEventManager` on Windows, and pre-first-frame `RinUINativeMacFrame` framing control on macOS.
 - **Qt 6 Native Color Scheme Monitoring**: Replaces Python 1-second `darkdetect` polling with Qt 6 `QStyleHints::colorSchemeChanged` signal notifications.
 - **Isolated Configuration Persistence (`rinui-platform`)**: Atomic writes, `schema_version` migration from legacy Python `rin_ui.json`, corruption backup recovery, and per-application configuration isolation via `AppIdentity`.
-- **Internationalization**: Qt locale detection, embedded QRC and filesystem `.qm` loading, `en_US` fallback, application translation catalogs, and live `QQmlEngine::retranslate()`.
-- **Multi-Window & Thread-Safe Ownership**: `!Send + !Sync` `RinUIHost` and `HostHandle`, `QPointer`-backed window tracking, deterministic Qt teardown ordering, and `WindowCustomizer` hook.
+- **Decoupled Internationalization**: Qt locale detection and normalization (`zh-CN`, `zh_Hans_CN`, `zh`), independent per-catalog resolution (RinUI `en_US` fallback never overrides a valid application active locale or `QLocale::setDefault()`), atomic 2-phase replacement with rollback and optional catalog unloading, embedded QRC and filesystem `.qm` loading, and multi-engine `QQmlEngine::retranslate()`.
+- **4-Layer Ownership, Existing Qt App Adoption & Generic Interop**:
+  - `RinUIRuntime<'app>` (owning `new` or borrowing `attach_existing` / `attach_existing_raw` over an external `QGuiApplication` / `QApplication`), `RinUISession<'app>` (`EngineMode::Shared` or `EngineMode::Private`), `SessionHandle<'app>` / `HostHandle` (weak-backed handles returning `HostError::HostDisposed` after teardown), and standalone `RinUIHost`.
+  - Checked root object property & method interop (`set_root_property`, `get_root_property`, `invoke_root_method`) plus scoped `configure_engine` extensibility.
 - **Native Platform Integration**:
-  - **macOS**: ARC Objective-C++ `NSWindow` transparent titlebar, `NSWindowStyleMaskFullSizeContentView`, `NSAppearance` sync, and idempotent traffic-light positioning. *(Compiled & CI-tested via `offscreen` + isolated Cocoa `.app`; interactive desktop visual QA pending.)*
-  - **Windows**: C++ `WinEventFilter` & `WinEventManager` (`WM_NCCALCSIZE`, `WM_GETMINMAXINFO`, `WM_NCHITTEST`, Windows 11 Snap Layouts `HTMAXBUTTON`, DWM Mica/Acrylic/Tabbed & Win10 `SetWindowCompositionAttribute`). *(Compiled & CI-tested via `offscreen` + isolated `windeployqt` `windows` QPA; interactive desktop visual QA pending.)*
-  - **Linux**: X11 / Wayland Qt compositor integration with graceful `-2` fallback for Windows-only backdrop APIs. *(Compiled & CI-tested via `offscreen` + `xvfb-run` `xcb`; real X11 WM & Wayland visual QA pending.)*
+  - **macOS**: Explicit framing choice (`MacWindowOptions::self_drawn()` default vs `MacWindowOptions::upstream_compatible()` / `native()`), ARC Objective-C++ `NSWindow` transparent titlebar, `NSWindowStyleMaskFullSizeContentView`, `NSAppearance` sync, idempotent traffic-light positioning, and per-window `_rinuiMacFrameDiagnostic`. *(Verified locally under Qt `6.12.0` via `offscreen` and isolated `.app` Cocoa QPA in both framing modes; interactive desktop visual QA pending.)*
+  - **Windows**: Runtime-lifetime C++ `WinEventFilter` & `WinEventManager` (`WM_NCCALCSIZE`, `WM_GETMINMAXINFO`, `WM_NCHITTEST`, Windows 11 Snap Layouts `HTMAXBUTTON`, DWM Mica/Acrylic/Tabbed, Win10 `SetWindowCompositionAttribute` including `ACCENT_DISABLED` cleanup), plus host-owned directory & zero-Python `package_msix.ps1` MSIX workflows and optional Authenticode signing. *(Prior baseline compiled/CI-tested on `Qt 6.9.3`; post-parity Windows runner CI, MSIX install/launch, and physical Win10/11 desktop QA pending.)*
+  - **Linux**: X11 / Wayland Qt compositor integration with graceful `-2` fallback for Windows-only backdrop APIs. *(Prior baseline compiled/CI-tested via `offscreen` + headless `xvfb-xcb`; post-parity Linux CI, real X11 WM, and native Wayland compositor QA pending.)*
 - **Dual Resource Modes**:
   - **Embedded (`ResourceMode::Embedded`)**: All RinUI QML, JS, fonts, images, and `.qm` files bundled via Qt `rcc` under `qrc:/rinui/RinUI`—release binaries run completely independently of the source checkout.
-  - **Developer Filesystem (`ResourceMode::Filesystem` / `--dev` / `RINUI_DEV_PATH`)**: Loads RinUI directly from disk without QRC shadowing.
+  - **Developer Filesystem (`ResourceMode::Filesystem` / `--dev` / `RINUI_DEV_PATH`)**: Fresh per-launch sanitized view owned by `ResourceView` & `GalleryDevView` (`UpstreamGallery.qml`, optional `--examples-dir` / `RINUI_EXAMPLES_DIR`) loading disk edits on restart without QRC shadowing.
 
 ---
 
@@ -38,11 +40,13 @@ Independent, reusable Rust + C++/Objective-C++ Qt 6 host library for the upstrea
 
 ### Platform Verification Status
 
-| Platform | Implemented | Compiled | Automated Tests & Isolated Packaged Smoke | Visually Verified (Interactive Desktop) |
-|---|---|---|---|---|
-| **macOS (arm64)** | Yes | Yes | Yes (`cargo test --workspace`, isolated `.app` Cocoa QPA on Qt `6.9.3` & `6.12.0`) | Pending desktop screenshot/visual QA |
-| **Windows (x64 MSVC)** | Yes | Yes | Yes (CI `cargo test --workspace`, isolated `windeployqt` `windows` QPA on Qt `6.9.3`) | Pending physical Windows 10/11 desktop QA |
-| **Linux (x64 GCC + `lld`)** | Yes | Yes | Yes (CI `cargo test --workspace`, isolated staging `offscreen` + Xvfb `xcb` on Qt `6.9.3`) | Pending real X11 WM & Wayland QA |
+| Platform | Implemented | Post-Parity Local Verification | CI / Physical Desktop & Signing Status |
+|---|---|---|---|
+| **macOS (arm64)** | Yes | Yes (`Qt 6.12.0`: `audit_upstream.py`, `cargo test --workspace`, `qt-widgets-test`, `engine_config_demo`, isolated `.app` strict Cocoa QPA in default & `--upstream-mac-frame` modes) | Prior `alpha.1` baseline CI passed on `Qt 6.9.3`; interactive post-parity visual/fullscreen QA & Developer ID signing/notarization not yet run |
+| **Windows (x64 MSVC)** | Yes | N/A on macOS host (`scripts/package_windows.ps1`, `scripts/package_msix.ps1` + `packaging/windows/` implemented) | Prior `alpha.1` baseline CI passed on `Qt 6.9.3`; post-parity CI (`windows` QPA + unsigned MSIX unpack), MSIX install/launch, Authenticode signing, and Win10/11 desktop QA pending Windows runner/desktop |
+| **Linux (x64 GCC + `lld`)** | Yes | N/A on macOS host (`scripts/package_linux.sh`) | Prior `alpha.1` baseline CI passed headless `xvfb-xcb`; post-parity Linux CI, real X11 WM, and native Wayland compositor QA pending Linux runner/desktop |
+
+*(Source-resource coverage of RinUI's runtime tree and automated `--smoke-test` checks establish resource loading, startup, frame mode selection, NavigationView/ErrorPage/ScrollView behavior, theme toggle, multi-window, and i18n, rather than replacing full manual GUI QA of every upstream control.)*
 
 ---
 
@@ -90,10 +94,11 @@ Release build & packaging:
 ```bash
 cargo build --release -p rinui-gallery
 
-# macOS:
+# macOS (ad-hoc by default; pass --sign-identity / --notarize / --notary-profile with credentials):
 ./scripts/package_macos.sh target/release/rinui-gallery dist
-# Windows (PowerShell):
+# Windows directory & MSIX (PowerShell; pass -Sign / -CertPfx / -CertThumbprint when signing):
 .\scripts\package_windows.ps1 -BinaryPath target\release\rinui-gallery.exe -OutputDir dist\RinUIGallery-win64
+.\scripts\package_msix.ps1 -SourceDirectory dist\RinUIGallery-win64 -OutputDirectory dist\msix -SkipSign -VerifyLayout
 # Linux:
 ./scripts/package_linux.sh target/release/rinui-gallery dist/rinui-gallery-linux
 ```
@@ -110,17 +115,17 @@ cmake --build build --target rinui_gallery_rust
 ## Gallery CLI Options & Screenshots
 
 `rinui-gallery` accepts the following CLI options:
-- `--dev [PATH]` — load RinUI directly from disk (`RINUI_DEV_PATH` or `upstream/Rin-UI` fallback in debug builds) instead of embedded QRC resources
-- `--smoke-test` — verify host contracts, multi-window, theme toggle, i18n switching/fallback, and config persistence, then exit
+- `--dev [PATH]` — load RinUI + examples via a fresh per-launch sanitized filesystem view (`RINUI_DEV_PATH` or `upstream/Rin-UI` fallback in debug builds) instead of embedded QRC resources
+- `--examples-dir <DIR>` — explicit upstream `examples/` directory when `--dev` targets a RinUI-only library checkout (also `RINUI_EXAMPLES_DIR`)
+- `--smoke-test` — verify host contracts, NavigationView sample push / `ErrorPage` recovery / `ScrollView`, macOS frame diagnostics, multi-window, theme toggle, decoupled i18n switching/fallback, and config persistence, then exit
 - `--auto-close-ms <MS>` — exit cleanly after `<MS>` milliseconds
 - `--locale <LOCALE>` — start with an explicit locale (e.g., `en_US`, `zh_CN`)
+- `--upstream-mac-frame` — select `MacWindowOptions::upstream_compatible()` (native `NSWindow` titlebar on macOS; normal frame elsewhere)
 - `--native-mac-frame` — opt into native macOS `NSWindow` titlebar integration
 - `--no-native-mac-frame` — explicitly use the default QML titlebar and traffic-light controls
 - `--config-dir <DIR>` — override configuration base directory
 
-On macOS, both the Gallery and `MacWindowOptions::default()` use RinUI's
-self-drawn QML titlebar and traffic-light controls. Native titlebars require
-explicit opt-in.
+On macOS, both the Gallery and `MacWindowOptions::default()` use RinUI's self-drawn QML titlebar and traffic-light controls by conservative host policy (whereas upstream RinUI QML defaults to native framing on macOS when PyObjC is present). Opt into upstream macOS framing explicitly with `--upstream-mac-frame` or `MacWindowOptions::upstream_compatible()`.
 
 > **Gallery Screenshots**: Automated `offscreen`, Xvfb `xcb`, Windows QPA, and Cocoa QPA startup checks pass, while interactive desktop visual QA screenshots have not yet been captured for `v0.1.0-alpha.1`.
 
@@ -166,8 +171,8 @@ fn main() -> ExitCode {
 
 ## Known Limitations (`v0.1.0-alpha.1`)
 
-- Interactive desktop visual QA (macOS Cocoa traffic-light geometry, Windows 11 DWM Mica/Acrylic/Snap Layouts/multi-monitor DPI, real Linux X11 WM and native Wayland compositors) is still pending manual visual inspection.
-- `scripts/package_macos.sh` applies local ad-hoc Mach-O signatures only (not Developer ID signed or Gatekeeper notarized).
+- Interactive desktop visual QA (macOS Cocoa traffic-light geometry/fullscreen restore on latest changes, Windows 10 Acrylic & Windows 11 DWM Mica/Acrylic/Snap Layouts/multi-monitor DPI, real Linux X11 WM and native Wayland compositors) and post-parity Windows/Linux CI runs remain open until run on physical desktops / CI runners.
+- Credentialed signing and distribution checks (Apple Developer ID signing/notarization, Windows Authenticode signing, and signed MSIX install/launch/uninstall) have not been executed without signing certificates; scripts default to ad-hoc (macOS) or `-SkipSign` unsigned MSIX (Windows).
 - Building on Apple Silicon with Xcode 26 (Clang 21) and Qt `< 6.11.1` requires `CXXFLAGS="-include arm_acle.h"` ([QTBUG-145239](https://qt-project.atlassian.net/browse/QTBUG-145239)).
 
 ---
