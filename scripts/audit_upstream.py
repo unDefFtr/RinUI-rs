@@ -10,6 +10,7 @@ Checks:
 4. All runtime QML, JS, font, image, and translation assets are inventoried.
 5. Host boundary symbols (ThemeManager, WinEventManager) and window properties
    referenced by upstream QML are verified.
+6. Vendored QML, assets, and the RinUI license match the submodule byte for byte.
 """
 
 from __future__ import annotations
@@ -125,6 +126,31 @@ def collect_runtime_assets(rinui_dir: Path) -> list[str]:
     return files
 
 
+def audit_vendor(upstream_dir: Path, vendor_dir: Path, assets: list[str]) -> None:
+    rinui_dir = upstream_dir / "RinUI"
+    vendor_rinui_dir = vendor_dir / "RinUI"
+    expected = set(assets)
+    expected.update(p.relative_to(rinui_dir).as_posix() for p in rinui_dir.rglob("*.ts"))
+    actual = {
+        p.relative_to(vendor_rinui_dir).as_posix()
+        for p in vendor_rinui_dir.rglob("*")
+        if p.is_file()
+    }
+    missing = expected - actual
+    extra = actual - expected
+    changed = [
+        name for name in sorted(expected & actual)
+        if (rinui_dir / name).read_bytes() != (vendor_rinui_dir / name).read_bytes()
+    ]
+    if (upstream_dir / "LICENSE").read_bytes() != (vendor_dir / "LICENSE.RinUI").read_bytes():
+        changed.append("LICENSE.RinUI")
+    if missing or extra or changed:
+        raise RuntimeError(
+            f"Vendored RinUI differs from the submodule: "
+            f"missing={sorted(missing)}, extra={sorted(extra)}, changed={changed}"
+        )
+
+
 def audit_host_contracts(rinui_dir: Path) -> tuple[list[str], list[str]]:
     host_pat = re.compile(r"\b(ThemeManager|WinEventManager)\b")
     qt_import_pat = re.compile(r"^\s*import\s+(Qt[A-Za-z0-9_.]+)")
@@ -154,6 +180,7 @@ def main() -> int:
 
     unexpected_broken, unexpected_versionless = audit_qmldir_files(rinui_dir)
     assets = collect_runtime_assets(rinui_dir)
+    audit_vendor(upstream_dir, root / "crates" / "rinui-host" / "vendor", assets)
     host_hits, qt_modules = audit_host_contracts(rinui_dir)
 
     print(f"Inventoried {len(assets)} RinUI runtime files (QML, JS, fonts, images, .qm, qmldir).")
@@ -174,7 +201,7 @@ def main() -> int:
                 print(f"  {qmldir}: {entry}", file=sys.stderr)
         return 1
 
-    print("Audit passed: zero unexpected qmldir regressions and clean submodule state.")
+    print("Audit passed: vendored sources match and no upstream qmldir regressions were found.")
     return 0
 
 

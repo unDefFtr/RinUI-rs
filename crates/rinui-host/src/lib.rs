@@ -98,20 +98,16 @@ mod tests {
             ":/rinui/RinUI/languages/zh_CN.qm"
         );
 
-        let upstream_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("upstream")
-            .join("Rin-UI");
+        let vendor_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor");
         let fs_res =
-            ResolvedResources::resolve(&ResourceMode::Filesystem(upstream_root.clone())).unwrap();
+            ResolvedResources::resolve(&ResourceMode::Filesystem(vendor_root.clone())).unwrap();
         let canonical =
-            resources::strip_windows_verbatim_prefix(upstream_root.canonicalize().unwrap());
+            resources::strip_windows_verbatim_prefix(vendor_root.canonicalize().unwrap());
         assert_eq!(fs_res.qml_import_path(), canonical.to_string_lossy());
 
         // Passing RinUI/ subdirectory directly should normalize to its parent.
         let fs_sub =
-            ResolvedResources::resolve(&ResourceMode::Filesystem(upstream_root.join("RinUI")))
+            ResolvedResources::resolve(&ResourceMode::Filesystem(vendor_root.join("RinUI")))
                 .unwrap();
         assert_eq!(fs_sub.qml_import_path(), canonical.to_string_lossy());
 

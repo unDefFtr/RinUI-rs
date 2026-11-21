@@ -73,7 +73,7 @@ RinUI Gallery 用交互式示例浏览 RinUI 的 Fluent 风格 Qt Quick/QML 控�
 
 ## 🪄 使用方法
 
-从源码构建需要 Rust（MSRV `1.85`）、C++ 工具链，以及包含 `Qt5Compat` 和 `QtShaderTools` 的 Qt 6。若 Qt 6 的 `qmake` 不在 `PATH` 中，请设置 `QMAKE` 指向它。
+构建需要 Rust（MSRV `1.88`）、C++ 工具链，以及包含 `Qt5Compat` 和 `QtShaderTools` 的 Qt 6。若 Qt 6 的 `qmake` 不在 `PATH` 中，请设置 `QMAKE` 指向它。
 
 - **Windows**：MSVC Build Tools 2022 和 Rust MSVC 工具链。
 - **macOS**：Xcode Command Line Tools。Apple Silicon + Xcode 26 搭配 Qt `< 6.11.1` 时，还需设置 `CXXFLAGS="-include arm_acle.h"`。
@@ -98,7 +98,7 @@ cargo run -p rinui-gallery -- --dev
 import RinUI
 ```
 
-在 Rust 中使用工作区的 `rinui-host` crate 加载 QML：
+待发布后，在应用的 `[dependencies]` 中添加 `rinui-host = "0.1.0-alpha.1"`。crate 内置原生桥接代码和上游 QML，构建应用无需克隆子模块。Rust 加载 QML 的方式如下。
 
 ```rust
 use rinui_host::{HostConfig, QmlSource, RinUIHost};
@@ -131,6 +131,8 @@ cargo build --release -p rinui-gallery
 ```
 
 桌面打包脚本：[macOS](../scripts/package_macos.sh)、[Windows](../scripts/package_windows.ps1)、[MSIX](../scripts/package_msix.ps1)、[Linux](../scripts/package_linux.sh)。
+
+在线接入指南与组件说明见 [RinUI-rs 文档](https://rinui-rs.undef.work/)。维护者可参考 [crates.io 发布流程](../README.md#publishing-to-cratesio)。
 
 > [!NOTE]
 > [上游在线文档](https://ui.rinlit.cn/)介绍 RinUI 的 QML 组件和主题，其中 Python/PySide 安装与启动说明适用于上游项目；本仓库请使用上述 Rust 宿主流程。

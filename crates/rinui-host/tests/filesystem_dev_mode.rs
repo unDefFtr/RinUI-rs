@@ -11,11 +11,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
     fs::create_dir_all(dst).expect("create target dir");
     for entry in fs::read_dir(src).expect("read source dir").flatten() {
         let src_path = entry.path();
-        let name = entry.file_name();
-        if name.to_string_lossy() == ".git" {
-            continue;
-        }
-        let dst_path = dst.join(name);
+        let dst_path = dst.join(entry.file_name());
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path);
         } else {
@@ -29,19 +25,17 @@ fn main() {
         std::env::set_var("QT_QPA_PLATFORM", "offscreen");
     }
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let upstream_root = workspace_root.join("upstream").join("Rin-UI");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let vendor_rinui = manifest_dir.join("vendor/RinUI");
     let tmp = TempDir::new().expect("create temp dir");
     let cfg_dir = tmp.path().join("cfg");
 
-    // Copy upstream Rin-UI to a writable directory containing spaces to verify
-    // runtime sanitization, path handling, and reload-on-restart without touching submodule.
+    // Verify runtime sanitization, paths containing spaces, and reload on restart
+    // using a writable copy of the bundled RinUI module.
     let copy_root = tmp.path().join("rinui dev copy");
-    copy_dir_recursive(&upstream_root, &copy_root);
+    copy_dir_recursive(&vendor_rinui, &copy_root.join("RinUI"));
 
-    let smoke_qml = workspace_root.join("qml").join("SmokeTest.qml");
+    let smoke_qml = manifest_dir.join("tests/fixtures/SmokeTest.qml");
 
     let staged_load_root: PathBuf;
     {

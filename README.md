@@ -71,11 +71,11 @@ Explore RinUI's Fluent-inspired Qt Quick/QML controls through interactive sample
 * Embedded QRC and developer filesystem resource modes
 * Windows, macOS, and Linux platform integration
 * Theme system (WIP)
-* Upstream QML component documentation, [preview](https://ui.rinlit.cn/) now.
+* [RinUI-rs documentation](https://rinui-rs.undef.work/) for Rust integration and QML components
 
 ## 🪄 Usage
 
-Build from source with Rust (MSRV `1.85`), a C++ toolchain, and Qt 6 with `Qt5Compat` and `QtShaderTools`. Set `QMAKE` to your Qt 6 `qmake` executable if it is not on `PATH`.
+Build with Rust (MSRV `1.88`), a C++ toolchain, and Qt 6 with `Qt5Compat` and `QtShaderTools`. Set `QMAKE` to your Qt 6 `qmake` executable if it is not on `PATH`.
 
 - **Windows**: MSVC Build Tools 2022 and the Rust MSVC toolchain.
 - **macOS**: Xcode Command Line Tools. Apple Silicon with Xcode 26 and Qt `< 6.11.1` also requires `CXXFLAGS="-include arm_acle.h"`.
@@ -100,7 +100,7 @@ Import RinUI in your QML file:
 import RinUI
 ```
 
-Use the workspace's `rinui-host` crate to load your QML from Rust:
+Add `rinui-host = "0.1.0-alpha.1"` to your application's `[dependencies]` once the crate is published. The crate bundles the native bridges and upstream QML, so applications can build without cloning the submodule. Use it to load your QML from Rust.
 
 ```rust
 use rinui_host::{HostConfig, QmlSource, RinUIHost};
@@ -133,6 +133,22 @@ cargo build --release -p rinui-gallery
 ```
 
 Desktop packaging scripts are available for [macOS](./scripts/package_macos.sh), [Windows](./scripts/package_windows.ps1), [MSIX](./scripts/package_msix.ps1), and [Linux](./scripts/package_linux.sh).
+
+### Publishing to crates.io
+
+Use a current stable Cargo and the Qt build environment above. From a clean checkout, audit the bundled QML and package both libraries together to verify their registry dependency without uploading.
+
+```bash
+python3 scripts/audit_upstream.py
+cargo package --registry crates-io -p rinui-platform -p rinui-host
+```
+
+If Cargo replaces crates.io with a mirror, use a release environment without the source replacement for the combined check. To release, publish `rinui-platform` first. Once its version is visible in the crates.io index, publish `rinui-host`. `rinui-gallery` is the repository's example application.
+
+```bash
+cargo publish --registry crates-io -p rinui-platform
+cargo publish --registry crates-io -p rinui-host
+```
 
 > [!NOTE]
 > The [upstream documentation](https://ui.rinlit.cn/) describes RinUI's QML components and themes. Its Python/PySide installation and startup instructions apply to upstream RinUI; use the Rust host workflow above for this repository.

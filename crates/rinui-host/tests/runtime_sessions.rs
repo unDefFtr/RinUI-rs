@@ -114,13 +114,12 @@ fn main() {
         std::env::set_var("QT_QPA_PLATFORM", "offscreen");
     }
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let smoke_qml = workspace_root.join("qml").join("SmokeTest.qml");
-    let dialog_qml = workspace_root.join("qml").join("MultiWindowDialog.qml");
-    let i18n_qml = workspace_root.join("qml").join("I18nTest.qml");
-    let upstream_rinui = workspace_root.join("upstream").join("Rin-UI").join("RinUI");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixtures_dir = manifest_dir.join("tests/fixtures");
+    let smoke_qml = fixtures_dir.join("SmokeTest.qml");
+    let dialog_qml = fixtures_dir.join("MultiWindowDialog.qml");
+    let i18n_qml = fixtures_dir.join("I18nTest.qml");
+    let upstream_rinui = manifest_dir.join("vendor/RinUI");
 
     let tmp = TempDir::new().expect("create temp test dir");
     let dev_upstream_copy = tmp.path().join("dev_upstream");

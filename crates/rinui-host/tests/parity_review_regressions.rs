@@ -81,11 +81,7 @@ fn run_worker(mode: &str) {
         "theme-alias" => worker_theme_alias(&tmp),
         "locale-live-embedded" => worker_locale_live(&tmp, ResourceMode::Embedded),
         "locale-live-dev" => {
-            let upstream = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-                .join("upstream")
-                .join("Rin-UI");
+            let upstream = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor");
             worker_locale_live(&tmp, ResourceMode::Filesystem(upstream));
         }
         mode if mode.starts_with("external-") => worker_external(&tmp, mode),
@@ -1074,7 +1070,7 @@ fn pump_external(app: &QGuiApplication, done: impl Fn() -> bool) {
 }
 
 fn worker_external(tmp: &TempDir, mode: &str) {
-    let upstream = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../upstream/Rin-UI/RinUI");
+    let upstream = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/RinUI");
     let source = tmp.path().join("upstream-copy");
     copy_resource_tree(&upstream, &source.join("RinUI"));
     let cfg = runtime_cfg(tmp, mode, ResourceMode::Filesystem(source));

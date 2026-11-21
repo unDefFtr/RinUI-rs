@@ -22,11 +22,9 @@ fn main() {
         std::env::set_var("QT_QPA_PLATFORM", "offscreen");
     }
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let smoke_qml = workspace_root.join("qml").join("SmokeTest.qml");
-    let dialog_qml = workspace_root.join("qml").join("MultiWindowDialog.qml");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let smoke_qml = fixtures_dir.join("SmokeTest.qml");
+    let dialog_qml = fixtures_dir.join("MultiWindowDialog.qml");
 
     // 1. Invalid ResourceMode must fail cleanly without poisoning subsequent RinUIHost::new().
     let tmp_invalid = TempDir::new().expect("temp dir for invalid resource test");

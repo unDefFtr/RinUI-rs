@@ -5,8 +5,22 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme = "README.md"
 links = "rinui-host"
-description = "Reusable Rust/CXX-Qt 6 host library for the upstream RinUI QML library"
+description = "Rust-native host and bindings for RinUI (Qt Quick/QML)"
+include = [
+    "/build.rs",
+    "/src/",
+    "/native/",
+    "/vendor/",
+    "/examples/",
+    "/tests/",
+    "/README.md",
+    "/LICENSE",
+    "/THIRD_PARTY_NOTICES.md",
+]
 
 [features]
 default = []

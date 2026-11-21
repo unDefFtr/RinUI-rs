@@ -33,11 +33,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Configured importPaths: {:?}", cfg.import_paths());
     })?;
 
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("qml")
-        .join("ObjectInteropFixture.qml");
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ObjectInteropFixture.qml");
     let loaded = host.load(&QmlSource::File(fixture))?;
     host.process_events();
 

@@ -47,10 +47,7 @@ fn main() {
     let app_qobject = unsafe { rinui_widgets_test_app_qobject(fixture.raw) };
     assert!(!app_qobject.is_null());
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let smoke_qml = workspace_root.join("qml").join("SmokeTest.qml");
+    let smoke_qml = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/SmokeTest.qml");
     let tmp = TempDir::new().expect("temp dir");
 
     // 1. Attach RinUIRuntime to Qt Widgets QApplication, run RinUI session, then drop runtime.

@@ -126,10 +126,7 @@ fn main() {
         std::env::set_var("QT_QPA_PLATFORM", "offscreen");
     }
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let i18n_qml = workspace_root.join("qml").join("I18nTest.qml");
+    let i18n_qml = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/I18nTest.qml");
 
     let tmp = TempDir::new().expect("create temp dir");
     let cfg_dir = tmp.path().join("cfg");

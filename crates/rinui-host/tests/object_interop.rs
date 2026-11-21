@@ -14,10 +14,8 @@ fn main() {
         std::env::set_var("QT_QPA_PLATFORM", "offscreen");
     }
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let fixture_qml = workspace_root.join("qml").join("ObjectInteropFixture.qml");
+    let fixture_qml =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ObjectInteropFixture.qml");
 
     let tmp = TempDir::new().expect("temp dir");
 

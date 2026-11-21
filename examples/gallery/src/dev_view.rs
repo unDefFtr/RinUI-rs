@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const ALLOWED_EXTENSIONS: &[&str] = &["qml", "js", "png", "svg", "jpg", "ttf", "otf", "qm"];
 const EMBEDDED_GALLERY_MAIN_QML: &str = include_str!("../qml/GalleryMain.qml");
 const EMBEDDED_DEMO_PAGE_QML: &str = include_str!("../qml/RustHostDemoPage.qml");
-const EMBEDDED_MULTI_WINDOW_QML: &str = include_str!("../../../qml/MultiWindowDialog.qml");
+const EMBEDDED_MULTI_WINDOW_QML: &str =
+    include_str!("../../../crates/rinui-host/tests/fixtures/MultiWindowDialog.qml");
 
 static GALLERY_DEV_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -50,7 +51,9 @@ impl GalleryDevView {
             )?;
             write_wrapper_qml(
                 &staged_dir.join("MultiWindowDialog.qml"),
-                &[Path::new("qml/MultiWindowDialog.qml")],
+                &[Path::new(
+                    "crates/rinui-host/tests/fixtures/MultiWindowDialog.qml",
+                )],
                 EMBEDDED_MULTI_WINDOW_QML,
             )?;
             Ok(())

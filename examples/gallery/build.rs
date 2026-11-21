@@ -22,7 +22,7 @@ fn main() {
 
     let upstream_examples = resolve_upstream_examples(&workspace_root);
     let gallery_qml_dir = manifest_dir.join("qml");
-    let shared_qml_dir = workspace_root.join("qml");
+    let shared_qml_dir = workspace_root.join("crates/rinui-host/tests/fixtures");
     let native_dir = manifest_dir.join("native");
 
     watch_dir(&gallery_qml_dir);

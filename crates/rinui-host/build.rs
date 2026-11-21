@@ -15,16 +15,11 @@ fn main() {
 
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("crates/rinui-host must live two levels under workspace root")
-        .to_path_buf();
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
 
-    let upstream_rinui = resolve_upstream_rinui(&workspace_root);
-    let native_include_dir = workspace_root.join("native").join("include");
-    let native_src_dir = workspace_root.join("native").join("src");
+    let upstream_rinui = resolve_upstream_rinui(&manifest_dir);
+    let native_include_dir = manifest_dir.join("native/include");
+    let native_src_dir = manifest_dir.join("native/src");
 
     watch_dir(&native_include_dir);
     watch_dir(&native_src_dir);
@@ -150,7 +145,7 @@ fn compile_macos_native(native_include_dir: &Path, native_src_dir: &Path) {
     println!("cargo::rustc-link-lib=framework=Foundation");
 }
 
-fn resolve_upstream_rinui(workspace_root: &Path) -> PathBuf {
+fn resolve_upstream_rinui(manifest_dir: &Path) -> PathBuf {
     let candidate = if let Ok(custom) = env::var("RINUI_UPSTREAM_DIR") {
         let p = PathBuf::from(custom);
         if p.join("RinUI").join("qmldir").is_file() {
@@ -159,12 +154,12 @@ fn resolve_upstream_rinui(workspace_root: &Path) -> PathBuf {
             p
         }
     } else {
-        workspace_root.join("upstream").join("Rin-UI").join("RinUI")
+        manifest_dir.join("vendor/RinUI")
     };
 
     if !candidate.join("qmldir").is_file() {
         panic!(
-            "Upstream RinUI not found at '{}'. Run `git submodule update --init --recursive`.",
+            "RinUI qmldir not found at '{}'. Check the bundled sources or RINUI_UPSTREAM_DIR.",
             candidate.display()
         );
     }

@@ -59,10 +59,8 @@ fn main() {
     host.set_context_property_string("CustomGreeting", "HelloFromRust")
         .expect("set custom context property");
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let smoke_qml = workspace_root.join("qml").join("SmokeTest.qml");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let smoke_qml = fixtures_dir.join("SmokeTest.qml");
 
     let loaded = host
         .load(&QmlSource::File(smoke_qml))
@@ -323,7 +321,7 @@ FluentWindow {
     // 5. Exercise multi-window theme sync and controlled release cleanup.
     let callbacks_before_dialog = callbacks.get();
     assert_eq!(callbacks_before_dialog, 2);
-    let dialog_qml = workspace_root.join("qml").join("MultiWindowDialog.qml");
+    let dialog_qml = fixtures_dir.join("MultiWindowDialog.qml");
     let secondary = host
         .load(&QmlSource::File(dialog_qml))
         .expect("load secondary MultiWindowDialog.qml");
