@@ -134,21 +134,32 @@ cargo build --release -p rinui-gallery
 
 Desktop packaging scripts are available for [macOS](./scripts/package_macos.sh), [Windows](./scripts/package_windows.ps1), [MSIX](./scripts/package_msix.ps1), and [Linux](./scripts/package_linux.sh).
 
-### Publishing to crates.io
+### Releasing rinui-rs
 
-Use a current stable Cargo and the Qt build environment above. From a clean checkout, audit the bundled QML and package both libraries together to verify their registry dependency without uploading.
+1. Merge the release commit into the default branch. From a clean checkout, verify that the Workspace version and both internal dependency versions in `Cargo.toml` match. Push the corresponding `v<version>` tag.
+2. **Release Gallery Draft** checks the tag, audits QML, verifies standalone Cargo packages, and builds and smoke-tests the Gallery on Windows x64, macOS arm64 and Linux x64 with Qt 6.12.0. The job artifacts expire after 14 days. The workflow uploads the four packages and `SHA256SUMS.txt` to a GitHub draft as permanent release assets.
+3. Wait for the workflow to succeed, review the draft and publish it as a maintainer from GitHub. A prerelease tag stays a GitHub prerelease. The draft uses `GITHUB_TOKEN`, and the maintainer's publish action starts **Publish crates.io**. If the event is suppressed, manually dispatch that workflow on the default branch with the same tag.
+4. Check the crates.io workflow summary for both library versions. It verifies the release assets and the tagged packages, publishes `rinui-platform`, waits for the index, then publishes `rinui-host`. `rinui-gallery` is private to the workspace.
+
+For a failed draft run, rerun failed jobs while artifacts are available or dispatch **Release Gallery Draft** on the default branch with the original tag. For a failed crates.io run, fix the reported cause and dispatch **Publish crates.io** the same way. The workflow checks the public index, downloaded content, and tagged source before skipping an existing version. A mismatched or yanked version stops the run.
+
+Optional macOS signing uses the GitHub `release` environment and its secrets `MACOS_DEV_ID_P12` (base64 Developer ID Application certificate) and `MACOS_DEV_ID_P12_PASSWORD`. Set `MACOS_SIGN_IDENTITY` if auto-detection cannot select the intended identity. To notarize, also set `MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID` and `MACOS_NOTARY_PASSWORD` (app-specific). Without the certificate, the bundle uses ad-hoc signing. The Windows ZIP and test MSIX are unsigned. The macOS plist uses the numeric version for Apple version fields and preserves full SemVer in `RinUIWorkspaceVersion`. MSIX uses its numeric manifest version (e.g. `0.1.0.1` for `0.1.0-alpha.1`).
+
+#### Bootstrap a new crate
+
+First uploads use a manually authorized crates.io API token. After the GitHub Release is published, check out its exact tag with submodules, use current stable Cargo and the Qt development environment above, and use a Cargo configuration without a crates.io source replacement. Use `cargo login --registry crates-io` with a short-lived token authorized to publish new crates. Never commit it or add it to GitHub secrets.
 
 ```bash
-python3 scripts/audit_upstream.py
-cargo package --registry crates-io -p rinui-platform -p rinui-host
+commit=$(git rev-parse HEAD)
+version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+GH_REPO=unDefFtr/rinui-rs python3 scripts/release.py published "v$version" "$commit"
+python3 scripts/release_crates.py preflight "$version" "$commit"
+python3 scripts/release_crates.py publish rinui-platform "$version" "$commit"
+python3 scripts/release_crates.py publish rinui-host "$version" "$commit"
+python3 scripts/release_crates.py status "$version" "$commit"
 ```
 
-If Cargo replaces crates.io with a mirror, use a release environment without the source replacement for the combined check. To release, publish `rinui-platform` first. Once its version is visible in the crates.io index, publish `rinui-host`. `rinui-gallery` is the repository's example application.
-
-```bash
-cargo publish --registry crates-io -p rinui-platform
-cargo publish --registry crates-io -p rinui-host
-```
+On each crate's crates.io Settings page, add a GitHub [Trusted Publisher](https://crates.io/docs/trusted-publishing) for owner `unDefFtr`, repository `rinui-rs`, workflow `publish-crates.yml`, and environment `crates-io`. Revoke the bootstrap token and dispatch **Publish crates.io** with the tag to verify both existing uploads. For subsequent versions, the workflow obtains a short-lived OIDC token. To restrict publication further, protect the `crates-io` GitHub environment and allow the default branch and release tags.
 
 > [!NOTE]
 > The [upstream documentation](https://ui.rinlit.cn/) describes RinUI's QML components and themes. Its Python/PySide installation and startup instructions apply to upstream RinUI; use the Rust host workflow above for this repository.

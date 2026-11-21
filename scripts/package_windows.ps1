@@ -68,6 +68,10 @@ $targetExe = Join-Path $OutputDir (Split-Path $BinaryPath -Leaf)
 Copy-Item $BinaryPath $targetExe
 Copy-Item "LICENSE" (Join-Path $OutputDir "LICENSE")
 Copy-Item "upstream\Rin-UI\LICENSE" (Join-Path $OutputDir "LICENSE.RinUI")
+Copy-Item "crates\rinui-host\vendor\LICENSE.FluentUI" (Join-Path $OutputDir "LICENSE.FluentUI")
+if ($env:RINUI_QT_LICENSES) {
+    Copy-Item -LiteralPath $env:RINUI_QT_LICENSES -Recurse -Destination (Join-Path $OutputDir "qt-licenses")
+}
 Copy-Item "THIRD_PARTY_NOTICES.md" (Join-Path $OutputDir "THIRD_PARTY_NOTICES.md")
 
 & $windeployqt `

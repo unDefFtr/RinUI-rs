@@ -257,11 +257,19 @@ try {
             "assets\Square44x44Logo.png",
             "assets\Square150x150Logo.png"
         )
+        if ($env:RINUI_QT_LICENSES) {
+            $expectedEntries += @("LICENSE.FluentUI", "qt-licenses\GPL-3.0-only.txt", "qt-licenses\LGPL-3.0-only.txt", "qt-licenses\SOURCE.txt")
+        }
         foreach ($rel in $expectedEntries) {
             $full = Join-Path $unpackDir $rel
             if (-not (Test-Path -LiteralPath $full)) {
                 throw "MSIX layout verification failed: missing '$rel' in unpacked package"
             }
+        }
+        [xml]$unpackedManifest = Get-Content -Raw -LiteralPath (Join-Path $unpackDir "AppxManifest.xml")
+        if ($unpackedManifest.Package.Identity.Version -ne $msixVersion -or
+            $unpackedManifest.Package.Identity.ProcessorArchitecture -ne $Architecture) {
+            throw "MSIX layout verification failed: unexpected version or architecture in AppxManifest.xml"
         }
         $qt5Compat = Get-ChildItem -Path $unpackDir -Recurse -Filter "GraphicalEffects" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "Qt5Compat[\\/]GraphicalEffects$" }

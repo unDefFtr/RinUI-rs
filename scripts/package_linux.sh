@@ -26,6 +26,10 @@ cp "${BINARY_PATH}" "${OUTPUT_DIR}/bin/rinui-gallery"
 chmod +x "${OUTPUT_DIR}/bin/rinui-gallery"
 cp "LICENSE" "${OUTPUT_DIR}/LICENSE"
 cp "upstream/Rin-UI/LICENSE" "${OUTPUT_DIR}/LICENSE.RinUI"
+cp "crates/rinui-host/vendor/LICENSE.FluentUI" "${OUTPUT_DIR}/LICENSE.FluentUI"
+if [[ -n "${RINUI_QT_LICENSES:-}" ]]; then
+    cp -R "${RINUI_QT_LICENSES}" "${OUTPUT_DIR}/qt-licenses"
+fi
 cp "THIRD_PARTY_NOTICES.md" "${OUTPUT_DIR}/THIRD_PARTY_NOTICES.md"
 
 # Copy Qt platform, input context, OpenGL, & imageformat plugins needed by RinUI

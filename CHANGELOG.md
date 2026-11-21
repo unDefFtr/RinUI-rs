@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 Upstream parity completion across `rinui-rs` (`upstream/Rin-UI` unchanged at `46d77fa8371ff0e9f46a10a2eb66612dab123269`).
 
 ### Added
+- Added tag-driven Qt 6.12.0 Gallery releases for Windows x64, macOS arm64 and Linux x64. A verified GitHub draft includes SHA-256 checksums. Publishing the draft triggers sequential, retryable crates.io publication with Trusted Publishing.
 - **Explicit Shared-Engine Detached Window Registration & Borrow-Checked `ThemeManager` Guards (`rinui-host`, `native/`)**:
   - Added `RinUIHost::register_window_from_property`, `RinUISession::register_window_from_property`, and `SessionHandle::register_window_from_property` (`rinui_register_window_from_root_property`, `HostError::{WindowNotOwned, WindowRegistrationFailed}`) to attribute singleton/detached `QQuickWindow`s on shared engines without letting unrelated sessions auto-claim them (`release_root` also cleans up registered detached windows).
   - Added `!Send + !Sync` `ThemeManagerRef<'_>` / `ThemeManagerMut<'_>` RAII borrow guards (`theme_borrow_state: Rc<Cell<isize>>`) and `mut_slot_active` recursive slot protection so concurrent read+write, write+write, write+read, and QML/session mutations while `ThemeManager` is borrowed return `Err(HostError::ReentrantCall(...))`.

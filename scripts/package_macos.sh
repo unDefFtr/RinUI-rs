@@ -24,6 +24,10 @@ OUTPUT_DIR=""
 SIGN_IDENTITY="${RINUI_MACOS_SIGN_IDENTITY:-}"
 ENTITLEMENTS="${RINUI_MACOS_ENTITLEMENTS:-}"
 NOTARY_PROFILE="${RINUI_MACOS_NOTARY_PROFILE:-}"
+NOTARY_ARGS=()
+if [[ -n "${RINUI_MACOS_NOTARY_KEYCHAIN:-}" ]]; then
+    NOTARY_ARGS+=(--keychain "${RINUI_MACOS_NOTARY_KEYCHAIN}")
+fi
 NOTARIZE=0
 if [[ "${RINUI_MACOS_NOTARIZE:-0}" == "1" || "${RINUI_MACOS_NOTARIZE:-}" == "true" ]]; then
     NOTARIZE=1
@@ -90,6 +94,28 @@ fi
 BINARY_PATH="${BINARY_PATH:-target/release/rinui-gallery}"
 OUTPUT_DIR="${OUTPUT_DIR:-dist}"
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORKSPACE_VERSION="$(awk '
+    /^\[workspace\.package\]$/ { in_section = 1; next }
+    /^\[/ { in_section = 0 }
+    in_section && /^version[[:space:]]*=/ {
+        value = $0
+        sub(/^[^=]*=[[:space:]]*"/, "", value)
+        sub(/".*$/, "", value)
+        print value
+        exit
+    }
+' "${REPO_ROOT}/Cargo.toml")"
+if [[ -z "${WORKSPACE_VERSION}" ]]; then
+    echo "error: could not read [workspace.package] version from ${REPO_ROOT}/Cargo.toml" >&2
+    exit 1
+fi
+BUNDLE_VERSION="${WORKSPACE_VERSION%%[-+]*}"
+if [[ ! "${BUNDLE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: could not derive a numeric macOS bundle version from ${WORKSPACE_VERSION}" >&2
+    exit 1
+fi
+
 if [[ -n "${ENTITLEMENTS}" && ! -f "${ENTITLEMENTS}" ]]; then
     echo "error: entitlements file not found at ${ENTITLEMENTS}" >&2
     exit 1
@@ -145,9 +171,13 @@ if [[ -f "upstream/Rin-UI/examples/assets/icons/app/gallery.png" ]]; then
 fi
 cp "LICENSE" "${RESOURCES_DIR}/LICENSE"
 cp "upstream/Rin-UI/LICENSE" "${RESOURCES_DIR}/LICENSE.RinUI"
+cp "crates/rinui-host/vendor/LICENSE.FluentUI" "${RESOURCES_DIR}/LICENSE.FluentUI"
+if [[ -n "${RINUI_QT_LICENSES:-}" ]]; then
+    cp -R "${RINUI_QT_LICENSES}" "${RESOURCES_DIR}/qt-licenses"
+fi
 cp "THIRD_PARTY_NOTICES.md" "${RESOURCES_DIR}/THIRD_PARTY_NOTICES.md"
 
-cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
+cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -165,9 +195,11 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0-alpha.1</string>
+    <string>${BUNDLE_VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUNDLE_VERSION}</string>
+    <key>RinUIWorkspaceVersion</key>
+    <string>${WORKSPACE_VERSION}</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
@@ -439,11 +471,12 @@ while IFS= read -r -d '' mach_bin; do
 done < <(list_macho_binaries)
 
 if [[ -n "${SIGN_IDENTITY}" && "${NOTARIZE}" -eq 1 ]]; then
-    NOTARY_ZIP="$(mktemp -u "${TMPDIR:-/tmp}/RinUIGallery-notarize.XXXXXX").zip"
-    trap 'rm -f "${NOTARY_ZIP}"' EXIT
+    NOTARY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/RinUIGallery-notarize.XXXXXX")"
+    NOTARY_ZIP="${NOTARY_DIR}/RinUIGallery.zip"
+    trap 'rm -rf "${NOTARY_DIR}"' EXIT
     ditto -c -k --keepParent "${BUNDLE_DIR}" "${NOTARY_ZIP}"
-    xcrun notarytool submit "${NOTARY_ZIP}" --keychain-profile "${NOTARY_PROFILE}" --wait
-    rm -f "${NOTARY_ZIP}"
+    xcrun notarytool submit "${NOTARY_ZIP}" --keychain-profile "${NOTARY_PROFILE}" ${NOTARY_ARGS[@]+"${NOTARY_ARGS[@]}"} --wait
+    rm -rf "${NOTARY_DIR}"
     trap - EXIT
     xcrun stapler staple "${BUNDLE_DIR}"
     xcrun stapler validate "${BUNDLE_DIR}"

@@ -1,0 +1,101 @@
+name: Publish crates.io
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published version tag (run on the default branch)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: crates-io-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/release-source
+        id: source
+        with:
+          tag: ${{ inputs.tag || github.event.release.tag_name }}
+      - name: Require a published release with verified assets and source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: python3 scripts/release.py published "$TAG" "$SOURCE_COMMIT"
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-24.04
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      SOURCE_COMMIT: ${{ needs.validate.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/setup-qt
+        with:
+          qt-arch: linux_gcc_64
+          install-linux-dependencies: 'true'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check packages before requesting credentials
+        run: python3 scripts/release_crates.py preflight "$VERSION" "$SOURCE_COMMIT"
+      - name: Verify any existing registry packages
+        id: existing
+        run: python3 scripts/release_crates.py status "$VERSION" "$SOURCE_COMMIT"
+      - name: Authenticate via crates.io Trusted Publishing
+        if: steps.existing.outputs.platform == 'false' || steps.existing.outputs.host == 'false'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - name: Publish rinui-platform and wait for the registry index
+        if: steps.existing.outputs.platform == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: python3 scripts/release_crates.py publish rinui-platform "$VERSION" "$SOURCE_COMMIT"
+      - name: Publish rinui-host and wait for the registry index
+        if: steps.existing.outputs.host == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: python3 scripts/release_crates.py publish rinui-host "$VERSION" "$SOURCE_COMMIT"
+      - name: Verify final registry state and report partial uploads
+        if: ${{ always() && steps.existing.outcome == 'success' }}
+        id: verified
+        run: python3 scripts/release_crates.py status "$VERSION" "$SOURCE_COMMIT"
+      - name: Require both crates to be available
+        if: steps.verified.outputs.platform != 'true' || steps.verified.outputs.host != 'true'
+        run: exit 1
+      - name: Document recovery
+        if: ${{ failure() }}
+        run: |
+          {
+            echo '### crates.io publication incomplete'
+            echo 'Check the registry report above. For a new crate, follow the README bootstrap procedure. For an existing crate, check its Trusted Publisher settings.'
+            echo 'Then dispatch Publish crates.io on the default branch with the same tag. Existing packages are verified before they are skipped.'
+          } >> "$GITHUB_STEP_SUMMARY"

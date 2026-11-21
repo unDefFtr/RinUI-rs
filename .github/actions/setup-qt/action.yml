@@ -1,0 +1,83 @@
+name: Setup Qt
+description: Install Qt 6.12.0 via aqtinstall and export QMAKE for CXX-Qt builds.
+
+inputs:
+  qt-version:
+    description: Qt version to install.
+    required: false
+    default: "6.12.0"
+  qt-arch:
+    description: install-qt-action architecture (for example win64_msvc2022_64, clang_64, linux_gcc_64).
+    required: true
+  qt-modules:
+    description: Space-separated Qt modules to install.
+    required: false
+    default: "qt5compat qtshadertools"
+  qt-aqt-source:
+    description: Optional aqtinstall source (used on Windows for the Qt 6.11+ repository layout).
+    required: false
+    default: ""
+  cache:
+    description: Enable install-qt-action download caching.
+    required: false
+    default: "true"
+  install-linux-dependencies:
+    description: Install the X11/Wayland/GL/Xvfb system packages required to run and package the Gallery on Linux.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Linux X11/Wayland/GL/Xvfb dependencies
+      if: runner.os == 'Linux' && inputs.install-linux-dependencies == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        # CXX-Qt requires a non-bfd linker for Cargo-linked executables/tests:
+        # the generated Qt resource and QML plugin initializers are linked via
+        # `+whole-archive`, which GNU ld.bfd does not handle correctly.
+        sudo apt-get install -y \
+          lld \
+          libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+          libfontconfig1-dev libfreetype6-dev libx11-dev libx11-xcb-dev \
+          libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 \
+          libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+          libxcb-util1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 \
+          libwayland-client0 libwayland-egl1 libdbus-1-3 libegl1 \
+          mesa-common-dev fonts-dejavu-core xvfb
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ inputs.qt-version }}
+        arch: ${{ inputs.qt-arch }}
+        modules: ${{ inputs.qt-modules }}
+        aqtsource: ${{ inputs.qt-aqt-source }}
+        cache: ${{ inputs.cache }}
+
+    - name: Export QMAKE and Qt diagnostics
+      shell: bash
+      run: |
+        QT_DIR="${QT_ROOT_DIR:-${Qt6_DIR:-}}"
+        if [[ -z "${QT_DIR}" ]]; then
+          echo "error: QT_ROOT_DIR / Qt6_DIR not set by install-qt-action" >&2
+          exit 1
+        fi
+        if [[ "${RUNNER_OS}" == "Windows" ]]; then
+          QT_DIR_MIXED="$(cygpath -m "${QT_DIR}")"
+          QMAKE_BIN="${QT_DIR_MIXED}/bin/qmake.exe"
+          printf '%s\n' "${QT_DIR}\\bin" >> "${GITHUB_PATH}"
+        else
+          QMAKE_BIN="${QT_DIR}/bin/qmake"
+        fi
+        echo "QMAKE=${QMAKE_BIN}" >> "${GITHUB_ENV}"
+        if [[ "${RUNNER_OS}" == "Linux" ]]; then
+          echo "LD_LIBRARY_PATH=${QT_DIR}/lib:${LD_LIBRARY_PATH:-}" >> "${GITHUB_ENV}"
+        fi
+        "${QMAKE_BIN}" --version
+        "${QMAKE_BIN}" -query
+        if [[ "${RUNNER_OS}" == "Linux" ]]; then
+          ld --version
+          ld.lld --version
+        fi

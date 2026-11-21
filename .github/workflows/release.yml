@@ -1,0 +1,114 @@
+name: Release Gallery Draft
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag (run on the default branch)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-gallery-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: ./.github/actions/release-source
+        id: source
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
+      - run: python3 scripts/audit_upstream.py
+      - run: cargo fmt --all -- --check
+
+  gallery:
+    needs: validate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-gallery.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+      commit: ${{ needs.validate.outputs.commit }}
+
+  crates-preflight:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/setup-qt
+        with:
+          qt-arch: linux_gcc_64
+          install-linux-dependencies: 'true'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify standalone Cargo packages
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          SOURCE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: python3 scripts/release_crates.py preflight "$VERSION" "$SOURCE_COMMIT"
+
+  draft:
+    needs: [validate, gallery, crates-preflight]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gallery-*
+          path: release-assets
+      - name: Create or verify draft and upload checked assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          SOURCE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: python3 scripts/release.py draft "$RELEASE_TAG" "$SOURCE_COMMIT" release-assets
+
+  summary:
+    if: ${{ always() }}
+    needs: [validate, gallery, crates-preflight, draft]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          VALIDATE: ${{ needs.validate.result }}
+          GALLERY: ${{ needs.gallery.result }}
+          CRATES: ${{ needs.crates-preflight.result }}
+          DRAFT: ${{ needs.draft.result }}
+        run: |
+          {
+            echo '### Release gates'
+            printf '| Gate | Result |\n| --- | --- |\n'
+            printf '| Source validation | %s |\n| Gallery matrix | %s |\n| Cargo preflight | %s |\n| Draft with checked assets | %s |\n' "$VALIDATE" "$GALLERY" "$CRATES" "$DRAFT"
+            echo 'Inspect per-platform jobs for package failures. Artifacts from successful jobs are retained for 14 days.'
+            echo 'Rerun failed jobs while artifacts are available. After expiry, dispatch Release Gallery Draft on the default branch for the existing tag.'
+          } >> "$GITHUB_STEP_SUMMARY"

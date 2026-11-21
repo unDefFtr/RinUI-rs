@@ -1,0 +1,634 @@
+name: Release Gallery
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag used verbatim in artifact filenames (for example v0.1.0-alpha.1).
+        required: true
+        type: string
+      commit:
+        description: Immutable commit SHA validated by the release orchestrator.
+        required: true
+        type: string
+    secrets:
+      MACOS_DEV_ID_P12:
+        description: Base64-encoded Developer ID Application certificate (.p12). Omit for ad-hoc signing.
+        required: false
+      MACOS_DEV_ID_P12_PASSWORD:
+        description: Password for MACOS_DEV_ID_P12.
+        required: false
+      MACOS_SIGN_IDENTITY:
+        description: Optional Developer ID Application identity name; auto-detected from the imported certificate when unset.
+        required: false
+      MACOS_NOTARY_APPLE_ID:
+        description: Apple ID for notarytool. Omit to skip notarization.
+        required: false
+      MACOS_NOTARY_TEAM_ID:
+        description: Apple Developer Team ID for notarytool.
+        required: false
+      MACOS_NOTARY_PASSWORD:
+        description: App-specific password for notarytool.
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  QT_VERSION: "6.12.0"
+
+jobs:
+  gallery:
+    name: Gallery (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    # The release environment (optional macOS signing secrets) is attached only to the macOS leg.
+    environment: ${{ matrix.environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-2025
+            environment: gallery-build
+            qt_arch: win64_msvc2022_64
+            # Released aqt 3.3.0 cannot resolve the Qt 6.11+ Windows repository layout.
+            qt_aqt_source: "git+https://github.com/miurahr/aqtinstall.git@5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7"
+          - platform: macos
+            os: macos-26
+            environment: release
+            qt_arch: clang_64
+            qt_aqt_source: ""
+          - platform: linux
+            os: ubuntu-24.04
+            environment: gallery-build
+            qt_arch: linux_gcc_64
+            qt_aqt_source: ""
+
+    steps:
+      - name: Check out immutable release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 1
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up Qt 6.12.0
+        uses: ./.github/actions/setup-qt
+        with:
+          qt-version: "6.12.0"
+          qt-arch: ${{ matrix.qt_arch }}
+          qt-aqt-source: ${{ matrix.qt_aqt_source }}
+          install-linux-dependencies: ${{ matrix.platform == 'linux' && 'true' || 'false' }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust toolchain diagnostics
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Enable MSVC C++ conformance for Qt headers
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "CXXFLAGS=${CXXFLAGS:+$CXXFLAGS }/Zc:__cplusplus /permissive-" >> "${GITHUB_ENV}"
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-gallery-${{ matrix.platform }}-qt-${{ env.QT_VERSION }}
+
+      - name: Build release Gallery
+        run: cargo build --locked --release -p rinui-gallery
+
+      - name: Run workspace tests offscreen
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cargo test --workspace --locked
+          cargo test --locked -p rinui-host --features qt-widgets-test --test external_qapplication
+          cargo run --locked -p rinui-host --example engine_config_demo
+
+      - name: Prepare Qt redistribution licenses
+        shell: bash
+        run: |
+          mkdir -p dist/qt-licenses
+          for license in GPL-3.0-only LGPL-3.0-only; do
+            curl --fail --silent --show-error --location --retry 3 \
+              "https://raw.githubusercontent.com/qt/qtbase/v${QT_VERSION}/LICENSES/${license}.txt" \
+              --output "dist/qt-licenses/${license}.txt"
+          done
+          printf 'Qt %s corresponding source and module notices:\nhttps://download.qt.io/official_releases/qt/%s/%s/single/\n' \
+            "${QT_VERSION}" "${QT_VERSION%.*}" "${QT_VERSION}" > dist/qt-licenses/SOURCE.txt
+          echo 'RINUI_QT_LICENSES=dist/qt-licenses' >> "$GITHUB_ENV"
+
+      # ----------------------------------------------------------------------
+      # macOS
+      # ----------------------------------------------------------------------
+
+      - name: Package, sign, and notarize macOS app
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOS_DEV_ID_P12: ${{ secrets.MACOS_DEV_ID_P12 }}
+          MACOS_DEV_ID_P12_PASSWORD: ${{ secrets.MACOS_DEV_ID_P12_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          SIGNING_STATUS="adhoc"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/rinui-release-signing.keychain-db"
+
+          if [[ -n "${MACOS_DEV_ID_P12}" ]]; then
+            if [[ -z "${MACOS_DEV_ID_P12_PASSWORD}" ]]; then
+              echo "error: MACOS_DEV_ID_P12 is set but MACOS_DEV_ID_P12_PASSWORD is empty" >&2
+              exit 1
+            fi
+
+            CERT_PATH="${RUNNER_TEMP}/rinui-dev-id.p12"
+            KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+
+            printf '%s' "${MACOS_DEV_ID_P12}" | base64 -D > "${CERT_PATH}"
+            security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+            security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+            security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+            security import "${CERT_PATH}" \
+              -k "${KEYCHAIN_PATH}" \
+              -P "${MACOS_DEV_ID_P12_PASSWORD}" \
+              -T /usr/bin/codesign \
+              -T /usr/bin/security
+            security set-key-partition-list \
+              -S apple-tool:,apple:,codesign: \
+              -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}" >/dev/null
+
+            EXISTING_KEYCHAINS="$(security list-keychains -d user | tr '\n' ' ' | tr -d '"')"
+            # shellcheck disable=SC2086
+            security list-keychains -d user -s "${KEYCHAIN_PATH}" ${EXISTING_KEYCHAINS}
+            rm -f "${CERT_PATH}"
+
+            IDENTITY="${MACOS_SIGN_IDENTITY}"
+            if [[ -z "${IDENTITY}" ]]; then
+              IDENTITY="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" \
+                | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1 || true)"
+            fi
+            if [[ -z "${IDENTITY}" ]]; then
+              echo "error: no Developer ID Application identity found in ${KEYCHAIN_PATH}" >&2
+              security find-identity -v -p codesigning "${KEYCHAIN_PATH}" >&2 || true
+              exit 1
+            fi
+
+            export RINUI_MACOS_SIGN_IDENTITY="${IDENTITY}"
+            SIGNING_STATUS="developer-id"
+
+            if [[ -n "${MACOS_NOTARY_APPLE_ID}" && -n "${MACOS_NOTARY_TEAM_ID}" && -n "${MACOS_NOTARY_PASSWORD}" ]]; then
+              xcrun notarytool store-credentials "rinui-gallery-release" \
+                --apple-id "${MACOS_NOTARY_APPLE_ID}" \
+                --team-id "${MACOS_NOTARY_TEAM_ID}" \
+                --password "${MACOS_NOTARY_PASSWORD}" \
+                --keychain "${KEYCHAIN_PATH}"
+              export RINUI_MACOS_NOTARIZE=1
+              export RINUI_MACOS_NOTARY_PROFILE="rinui-gallery-release"
+              export RINUI_MACOS_NOTARY_KEYCHAIN="${KEYCHAIN_PATH}"
+              SIGNING_STATUS="notarized"
+            else
+              echo "Notarization secrets incomplete; signing with Developer ID without notarization."
+            fi
+          else
+            echo "No MACOS_DEV_ID_P12 secret; packaging with the default ad-hoc signature."
+          fi
+
+          ./scripts/package_macos.sh target/release/rinui-gallery dist
+          echo "RINUI_MACOS_SIGNING_STATUS=${SIGNING_STATUS}" >> "${GITHUB_ENV}"
+
+      - name: Smoke-test raw and packaged macOS Gallery
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "${TMP_DIR}"' EXIT
+
+          cp target/release/rinui-gallery "${TMP_DIR}/rinui-gallery"
+          (
+            cd "${TMP_DIR}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR QT_QPA_PLATFORM=offscreen \
+              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin-default"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR QT_QPA_PLATFORM=offscreen \
+              ./rinui-gallery --upstream-mac-frame --smoke-test --config-dir "${TMP_DIR}/cfg-bin-upstream"
+          )
+
+          cp -R dist/RinUIGallery.app "${TMP_DIR}/RinUIGallery.app"
+          (
+            cd "${TMP_DIR}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+              QT_QPA_PLATFORM=cocoa ./RinUIGallery.app/Contents/MacOS/RinUIGallery --smoke-test --config-dir "${TMP_DIR}/cfg-cocoa-default"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+              QT_QPA_PLATFORM=cocoa ./RinUIGallery.app/Contents/MacOS/RinUIGallery --upstream-mac-frame --smoke-test --config-dir "${TMP_DIR}/cfg-cocoa-upstream"
+          )
+
+      - name: Archive and verify macOS artifact
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="dist/RinUIGallery-${RELEASE_TAG}-macos-arm64.zip"
+          VERIFY_DIR="$(mktemp -d)"
+          trap 'rm -rf "${VERIFY_DIR}"' EXIT
+
+          ditto -c -k --keepParent dist/RinUIGallery.app "${ARCHIVE}"
+          ditto -x -k "${ARCHIVE}" "${VERIFY_DIR}"
+
+          APP="${VERIFY_DIR}/RinUIGallery.app"
+          BIN="${APP}/Contents/MacOS/RinUIGallery"
+          for required in \
+            "${APP}/Contents/Info.plist" \
+            "${BIN}" \
+            "${APP}/Contents/Frameworks/QtCore.framework" \
+            "${APP}/Contents/PlugIns/platforms/libqcocoa.dylib" \
+            "${APP}/Contents/Resources/qt.conf" \
+            "${APP}/Contents/Resources/LICENSE" \
+            "${APP}/Contents/Resources/LICENSE.RinUI" \
+            "${APP}/Contents/Resources/LICENSE.FluentUI" \
+            "${APP}/Contents/Resources/qt-licenses/LGPL-3.0-only.txt" \
+            "${APP}/Contents/Resources/THIRD_PARTY_NOTICES.md"
+          do
+            if [[ ! -e "${required}" ]]; then
+              echo "error: extracted macOS artifact missing ${required}" >&2
+              exit 1
+            fi
+          done
+
+          ARCHS="$(lipo -archs "${BIN}")"
+          echo "macOS binary architectures: ${ARCHS}"
+          if [[ " ${ARCHS} " != *" arm64 "* ]]; then
+            echo "error: expected arm64 macOS binary, got ${ARCHS}" >&2
+            exit 1
+          fi
+
+          DEPENDENCIES="$(otool -L "${BIN}")"
+          printf '%s\n' "${DEPENDENCIES}"
+          if ! grep -q '@rpath/QtCore.framework' <<<"${DEPENDENCIES}"; then
+            echo "error: macOS binary does not link the bundled QtCore framework" >&2
+            exit 1
+          fi
+          if [[ -n "${QT_ROOT_DIR:-}" ]] && grep -Fq "${QT_ROOT_DIR}" <<<"${DEPENDENCIES}"; then
+            echo "error: macOS binary references the external Qt installation" >&2
+            exit 1
+          fi
+          if grep -Eq '/opt/homebrew|/usr/local/(opt|lib)' <<<"${DEPENDENCIES}"; then
+            echo "error: macOS binary has unresolved external dylib references" >&2
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "${APP}"
+
+          # Keep the exact pre-release version in custom bundle metadata.
+          PLIST="${APP}/Contents/Info.plist"
+          VERSION="${RELEASE_TAG#v}"
+          if [[ "$(/usr/libexec/PlistBuddy -c 'Print :RinUIWorkspaceVersion' "${PLIST}")" != "${VERSION}" ||
+                "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${PLIST}")" != "${VERSION%%-*}" ||
+                "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${PLIST}")" != "${VERSION%%-*}" ]]; then
+            echo "error: Info.plist versions do not match ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+            QT_QPA_PLATFORM=offscreen "${BIN}" --smoke-test --config-dir "${VERIFY_DIR}/cfg-extracted"
+
+          printf '%s' "${RINUI_MACOS_SIGNING_STATUS:-adhoc}" > dist/macos-signing.txt
+          echo "macOS signing status: $(cat dist/macos-signing.txt)"
+
+      - name: Remove temporary macOS signing keychain
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          KEYCHAIN_PATH="${RUNNER_TEMP}/rinui-release-signing.keychain-db"
+          if [[ -f "${KEYCHAIN_PATH}" ]]; then
+            security delete-keychain "${KEYCHAIN_PATH}" || true
+          fi
+          rm -f "${RUNNER_TEMP}/rinui-dev-id.p12"
+
+      # ----------------------------------------------------------------------
+      # Windows
+      # ----------------------------------------------------------------------
+
+      - name: Package Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package_windows.ps1 -BinaryPath target\release\rinui-gallery.exe -OutputDir dist\RinUIGallery-win64
+
+      - name: Smoke-test raw and packaged Windows Gallery
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("rinui-win-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+
+          $rawBin = Join-Path $tmpDir "rinui-gallery-raw.exe"
+          Copy-Item "target\release\rinui-gallery.exe" $rawBin
+          $qtDirRaw = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
+          $qtBinClean = ($qtDirRaw -replace '/', '\').TrimEnd('\') + "\bin"
+          $origPath = $env:Path
+          $origDev = $env:RINUI_DEV_PATH
+          $origUpstream = $env:RINUI_UPSTREAM_DIR
+          $origPluginPath = $env:QT_PLUGIN_PATH
+          $origQmlImport = $env:QML_IMPORT_PATH
+          $origQml2Import = $env:QML2_IMPORT_PATH
+          try {
+            Remove-Item Env:RINUI_DEV_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:RINUI_UPSTREAM_DIR -ErrorAction SilentlyContinue
+            Remove-Item Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:QML_IMPORT_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:QML2_IMPORT_PATH -ErrorAction SilentlyContinue
+            $env:QT_QPA_PLATFORM = "offscreen"
+            & $rawBin --smoke-test --config-dir (Join-Path $tmpDir "cfg-raw-offscreen")
+            if ($LASTEXITCODE -ne 0) {
+              throw "Isolated Windows raw binary offscreen smoke test failed with exit code $LASTEXITCODE"
+            }
+
+            $pkgDir = Join-Path $tmpDir "pkg"
+            Copy-Item -Recurse -Force "dist\RinUIGallery-win64" $pkgDir
+            $filteredPath = ($origPath -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $qtBinClean) }) -join ';'
+            $env:Path = $filteredPath
+
+            $exe = Join-Path $pkgDir "rinui-gallery.exe"
+            Push-Location $pkgDir
+            $env:QT_QPA_PLATFORM = "windows"
+            & $exe --smoke-test --config-dir (Join-Path $tmpDir "cfg-pkg-windows")
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows QPA smoke test inside isolated windeployqt package failed with exit code $LASTEXITCODE"
+            }
+          } finally {
+            Pop-Location -ErrorAction SilentlyContinue
+            $env:Path = $origPath
+            if ($null -ne $origDev) { $env:RINUI_DEV_PATH = $origDev }
+            if ($null -ne $origUpstream) { $env:RINUI_UPSTREAM_DIR = $origUpstream }
+            if ($null -ne $origPluginPath) { $env:QT_PLUGIN_PATH = $origPluginPath }
+            if ($null -ne $origQmlImport) { $env:QML_IMPORT_PATH = $origQmlImport }
+            if ($null -ne $origQml2Import) { $env:QML2_IMPORT_PATH = $origQml2Import }
+            Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
+          }
+
+      - name: Build and verify unsigned MSIX
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          ./scripts/package_msix.ps1 -SourceDirectory dist\RinUIGallery-win64 -OutputDirectory dist\msix -Version ($env:RELEASE_TAG.Substring(1)) -SkipSign -VerifyLayout
+          $msix = Get-ChildItem -Path "dist\msix" -Filter "*-unsigned.msix" -File | Select-Object -First 1
+          if (-not $msix) {
+            throw "No unsigned MSIX produced under dist\msix"
+          }
+          $msixTarget = "dist\RinUIGallery-$env:RELEASE_TAG-windows-x64-unsigned.msix"
+          Move-Item -LiteralPath $msix.FullName -Destination $msixTarget -Force
+          Write-Host "Renamed unsigned MSIX to $msixTarget"
+
+      - name: Archive and verify Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          function Get-PeMachine([string]$Path) {
+            $stream = [IO.File]::OpenRead($Path)
+            $reader = New-Object IO.BinaryReader($stream)
+            try {
+              $stream.Position = 0x3C
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "Not a PE file: $Path"
+              }
+              $machine = $reader.ReadUInt16()
+            } finally {
+              $reader.Dispose()
+              $stream.Dispose()
+            }
+            switch ($machine) {
+              0x8664 { return "x64" }
+              0xAA64 { return "arm64" }
+              0x014C { return "x86" }
+              default { throw ("Unsupported PE machine 0x{0:X4} in {1}" -f $machine, $Path) }
+            }
+          }
+
+          $zip = "dist\RinUIGallery-$env:RELEASE_TAG-windows-x64.zip"
+          Compress-Archive -Path "dist\RinUIGallery-win64\*" -DestinationPath $zip -CompressionLevel Optimal
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP ("rinui-win-verify-" + [System.Guid]::NewGuid().ToString("N"))
+          Expand-Archive -Path $zip -DestinationPath $verifyDir
+          try {
+            $exe = Join-Path $verifyDir "rinui-gallery.exe"
+            foreach ($required in @(
+                $exe,
+                (Join-Path $verifyDir "platforms\qwindows.dll"),
+                (Join-Path $verifyDir "Qt6Core.dll"),
+                (Join-Path $verifyDir "Qt6Gui.dll"),
+                (Join-Path $verifyDir "Qt6Qml.dll"),
+                (Join-Path $verifyDir "Qt6Quick.dll"),
+                (Join-Path $verifyDir "LICENSE"),
+                (Join-Path $verifyDir "LICENSE.RinUI"),
+                (Join-Path $verifyDir "LICENSE.FluentUI"),
+                (Join-Path $verifyDir "qt-licenses\LGPL-3.0-only.txt"),
+                (Join-Path $verifyDir "THIRD_PARTY_NOTICES.md")
+              )) {
+              if (-not (Test-Path -LiteralPath $required)) {
+                throw "Extracted Windows artifact missing $required"
+              }
+            }
+            $qt5Compat = Get-ChildItem -Path $verifyDir -Recurse -Filter "GraphicalEffects" -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match "Qt5Compat[\\/]GraphicalEffects$" }
+            if (-not $qt5Compat) {
+              throw "Extracted Windows artifact missing Qt5Compat\GraphicalEffects"
+            }
+
+            $arch = Get-PeMachine $exe
+            if ($arch -ne "x64") {
+              throw "Expected x64 Windows executable, got $arch"
+            }
+            $coreArch = Get-PeMachine (Join-Path $verifyDir "Qt6Core.dll")
+            if ($coreArch -ne "x64") {
+              throw "Expected x64 Qt6Core.dll, got $coreArch"
+            }
+            Write-Host "Windows archive architecture verified: $arch"
+
+            $origPath = $env:Path
+            $origDev = $env:RINUI_DEV_PATH
+            $origUpstream = $env:RINUI_UPSTREAM_DIR
+            $origPluginPath = $env:QT_PLUGIN_PATH
+            $origQmlImport = $env:QML_IMPORT_PATH
+            $origQml2Import = $env:QML2_IMPORT_PATH
+            try {
+              Remove-Item Env:RINUI_DEV_PATH -ErrorAction SilentlyContinue
+              Remove-Item Env:RINUI_UPSTREAM_DIR -ErrorAction SilentlyContinue
+              Remove-Item Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+              Remove-Item Env:QML_IMPORT_PATH -ErrorAction SilentlyContinue
+              Remove-Item Env:QML2_IMPORT_PATH -ErrorAction SilentlyContinue
+              $qtDirRaw = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
+              $qtBinClean = ($qtDirRaw -replace '/', '\').TrimEnd('\') + "\bin"
+              $env:Path = ($origPath -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $qtBinClean) }) -join ';'
+              $env:QT_QPA_PLATFORM = "windows"
+              Push-Location $verifyDir
+              & $exe --smoke-test --config-dir (Join-Path $verifyDir "cfg-extracted")
+              if ($LASTEXITCODE -ne 0) {
+                throw "Extracted Windows package smoke test failed with exit code $LASTEXITCODE"
+              }
+            } finally {
+              Pop-Location -ErrorAction SilentlyContinue
+              $env:Path = $origPath
+              if ($null -ne $origDev) { $env:RINUI_DEV_PATH = $origDev }
+              if ($null -ne $origUpstream) { $env:RINUI_UPSTREAM_DIR = $origUpstream }
+              if ($null -ne $origPluginPath) { $env:QT_PLUGIN_PATH = $origPluginPath }
+              if ($null -ne $origQmlImport) { $env:QML_IMPORT_PATH = $origQmlImport }
+              if ($null -ne $origQml2Import) { $env:QML2_IMPORT_PATH = $origQml2Import }
+              Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+            }
+          } finally {
+            Remove-Item -Recurse -Force $verifyDir -ErrorAction SilentlyContinue
+          }
+
+      # ----------------------------------------------------------------------
+      # Linux
+      # ----------------------------------------------------------------------
+
+      - name: Package Linux distribution
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./scripts/package_linux.sh target/release/rinui-gallery dist/rinui-gallery-linux
+
+      - name: Smoke-test raw and packaged Linux Gallery
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "${TMP_DIR}"' EXIT
+
+          cp target/release/rinui-gallery "${TMP_DIR}/rinui-gallery"
+          (
+            cd "${TMP_DIR}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR QT_QPA_PLATFORM=offscreen \
+              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin-offscreen"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR xvfb-run -a env QT_QPA_PLATFORM=xcb \
+              ./rinui-gallery --smoke-test --config-dir "${TMP_DIR}/cfg-bin-xcb"
+          )
+
+          cp -R dist/rinui-gallery-linux "${TMP_DIR}/pkg"
+          (
+            cd "${TMP_DIR}/pkg"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+              QT_QPA_PLATFORM=offscreen ./run-gallery.sh --smoke-test --config-dir "${TMP_DIR}/cfg-pkg-offscreen"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+              xvfb-run -a env QT_QPA_PLATFORM=xcb ./run-gallery.sh --smoke-test --config-dir "${TMP_DIR}/cfg-pkg-xcb"
+          )
+
+      - name: Archive and verify Linux artifact
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="dist/RinUIGallery-${RELEASE_TAG}-linux-x64.tar.gz"
+          tar -C dist -czf "${ARCHIVE}" rinui-gallery-linux
+
+          VERIFY_DIR="$(mktemp -d)"
+          trap 'rm -rf "${VERIFY_DIR}"' EXIT
+          tar -xzf "${ARCHIVE}" -C "${VERIFY_DIR}"
+
+          PKG="${VERIFY_DIR}/rinui-gallery-linux"
+          BIN="${PKG}/bin/rinui-gallery"
+          for required in \
+            "${BIN}" \
+            "${PKG}/run-gallery.sh" \
+            "${PKG}/plugins/platforms" \
+            "${PKG}/qml/Qt5Compat/GraphicalEffects" \
+            "${PKG}/LICENSE" \
+            "${PKG}/LICENSE.RinUI" \
+            "${PKG}/LICENSE.FluentUI" \
+            "${PKG}/qt-licenses/LGPL-3.0-only.txt" \
+            "${PKG}/THIRD_PARTY_NOTICES.md"
+          do
+            if [[ ! -e "${required}" ]]; then
+              echo "error: extracted Linux artifact missing ${required}" >&2
+              exit 1
+            fi
+          done
+
+          FILE_INFO="$(file "${BIN}")"
+          echo "${FILE_INFO}"
+          if [[ "${FILE_INFO}" != *"ELF 64-bit LSB"* || "${FILE_INFO}" != *"x86-64"* ]]; then
+            echo "error: expected an x86-64 ELF executable" >&2
+            exit 1
+          fi
+
+          LDD_INFO="$(env LD_LIBRARY_PATH="${PKG}/lib" ldd "${BIN}")"
+          printf '%s\n' "${LDD_INFO}"
+          if grep -q 'not found' <<<"${LDD_INFO}"; then
+            echo "error: extracted Linux artifact has unresolved shared library dependencies" >&2
+            exit 1
+          fi
+          if ! grep -q "${PKG}/lib/libQt6Core.so" <<<"${LDD_INFO}"; then
+            echo "error: extracted Linux binary does not link the bundled libQt6Core" >&2
+            exit 1
+          fi
+
+          (
+            cd "${PKG}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+              QT_QPA_PLATFORM=offscreen ./run-gallery.sh --smoke-test --config-dir "${VERIFY_DIR}/cfg-extracted-offscreen"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+              xvfb-run -a env QT_QPA_PLATFORM=xcb ./run-gallery.sh --smoke-test --config-dir "${VERIFY_DIR}/cfg-extracted-xcb"
+          )
+
+      # ----------------------------------------------------------------------
+      # Artifacts (14-day retention)
+      # ----------------------------------------------------------------------
+
+      - name: Upload Windows Gallery artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gallery-windows
+          path: |
+            dist/RinUIGallery-${{ inputs.tag }}-windows-x64.zip
+            dist/RinUIGallery-${{ inputs.tag }}-windows-x64-unsigned.msix
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
+      - name: Upload macOS Gallery artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gallery-macos
+          path: |
+            dist/RinUIGallery-${{ inputs.tag }}-macos-arm64.zip
+            dist/macos-signing.txt
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
+      - name: Upload Linux Gallery artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gallery-linux
+          path: dist/RinUIGallery-${{ inputs.tag }}-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
