@@ -302,8 +302,11 @@ jobs:
             exit 1
           fi
 
-          env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
-            QT_QPA_PLATFORM=offscreen "${BIN}" --smoke-test --config-dir "${VERIFY_DIR}/cfg-extracted"
+          (
+            cd "${VERIFY_DIR}"
+            env -u RINUI_DEV_PATH -u RINUI_UPSTREAM_DIR -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+              QT_QPA_PLATFORM=cocoa "${BIN}" --smoke-test --config-dir "${VERIFY_DIR}/cfg-extracted"
+          )
 
           printf '%s' "${RINUI_MACOS_SIGNING_STATUS:-adhoc}" > dist/macos-signing.txt
           echo "macOS signing status: $(cat dist/macos-signing.txt)"
