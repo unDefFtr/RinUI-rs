@@ -96,6 +96,6 @@ jobs:
         run: |
           {
             echo '### crates.io publication incomplete'
-            echo 'Check the registry report above. For a new crate, follow the README bootstrap procedure. For an existing crate, check its Trusted Publisher settings.'
+            echo 'Check the registry report above. See the [crates.io Trusted Publishing documentation](https://crates.io/docs/trusted-publishing) for first uploads and publisher configuration.'
             echo 'Then dispatch Publish crates.io on the default branch with the same tag. Existing packages are verified before they are skipped.'
           } >> "$GITHUB_STEP_SUMMARY"
