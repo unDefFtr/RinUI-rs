@@ -17,7 +17,7 @@ Independent, reusable Rust + C++/Objective-C++ Qt 6 host library for the upstrea
   - `RinUIRuntime<'app>` (owning `new` or borrowing `attach_existing` / `attach_existing_raw` over an external `QGuiApplication` / `QApplication`), `RinUISession<'app>` (`EngineMode::Shared` or `EngineMode::Private`), `SessionHandle<'app>` / `HostHandle` (weak-backed handles returning `HostError::HostDisposed` after teardown), and standalone `RinUIHost`.
   - Checked root object property & method interop (`set_root_property`, `get_root_property`, `invoke_root_method`) plus scoped `configure_engine` extensibility.
 - **Native Platform Integration**:
-  - **macOS**: Explicit framing choice (`MacWindowOptions::self_drawn()` default vs `MacWindowOptions::upstream_compatible()` / `native()`), ARC Objective-C++ `NSWindow` transparent titlebar, `NSWindowStyleMaskFullSizeContentView`, `NSAppearance` sync, idempotent traffic-light positioning, and per-window `_rinuiMacFrameDiagnostic`. *(Verified locally under Qt `6.12.0` via `offscreen` and isolated `.app` Cocoa QPA in both framing modes; interactive desktop visual QA pending.)*
+  - **macOS**: Explicit framing choice (`MacWindowOptions::self_drawn()` default vs `MacWindowOptions::upstream_compatible()` / `native()`), ARC Objective-C++ `NSWindow` transparent titlebar, `NSWindowStyleMaskFullSizeContentView`, `NSAppearance` sync, idempotent traffic-light positioning, and per-window `_rinuiMacFrameDiagnostic`. *(Qt `6.12.0` desktop interaction checks passed in both framing modes, including self-drawn fullscreen; see [validation scope](docs/validation-report.md#12-qt-612-gallery-desktop-validation-2026-11-21).)*
   - **Windows**: Runtime-lifetime C++ `WinEventFilter` & `WinEventManager` (`WM_NCCALCSIZE`, `WM_GETMINMAXINFO`, `WM_NCHITTEST`, Windows 11 Snap Layouts `HTMAXBUTTON`, DWM Mica/Acrylic/Tabbed, Win10 `SetWindowCompositionAttribute` including `ACCENT_DISABLED` cleanup), plus host-owned directory & zero-Python `package_msix.ps1` MSIX workflows and optional Authenticode signing. *(Prior baseline compiled/CI-tested on `Qt 6.9.3`; post-parity Windows runner CI, MSIX install/launch, and physical Win10/11 desktop QA pending.)*
   - **Linux**: X11 / Wayland Qt compositor integration with graceful `-2` fallback for Windows-only backdrop APIs. *(Prior baseline compiled/CI-tested via `offscreen` + headless `xvfb-xcb`; post-parity Linux CI, real X11 WM, and native Wayland compositor QA pending.)*
 - **Dual Resource Modes**:
@@ -35,16 +35,16 @@ Independent, reusable Rust + C++/Objective-C++ Qt 6 host library for the upstrea
 | Rust Toolchain | CI: `rustc 1.100.0`; Local macOS: `rustc 1.97.1` (MSRV `1.85`) |
 | `cxx-qt` / `cxx-qt-lib` / `cxx-qt-build` / `qt-build-utils` | `0.10.0` |
 | `cxx` | `1.0` |
-| Qt 6 | CI: Qt `6.10.3` (Windows MSVC), `6.9.3` (macOS arm64, Ubuntu GCC+`lld`); Local macOS: `6.12.0` & `6.9.3` (`>= 6.8` in CMake) with `Qt5Compat` & `QtShaderTools` |
+| Qt 6 | CI: Qt `6.12.0` (Windows MSVC, macOS arm64, Ubuntu GCC+`lld`); Local macOS: `6.12.0` & `6.9.3` (`>= 6.8` in CMake) with `Qt5Compat` & `QtShaderTools` |
 | CMake | `>= 3.24` (verified locally on `4.4.0`) |
 
 ### Platform Verification Status
 
 | Platform | Implemented | Post-Parity Local Verification | CI / Physical Desktop & Signing Status |
 |---|---|---|---|
-| **macOS (arm64)** | Yes | Yes (`Qt 6.12.0`: `audit_upstream.py`, `cargo test --workspace`, `qt-widgets-test`, `engine_config_demo`, isolated `.app` strict Cocoa QPA in default & `--upstream-mac-frame` modes) | Prior `alpha.1` baseline CI passed on `Qt 6.9.3`; interactive post-parity visual/fullscreen QA & Developer ID signing/notarization not yet run |
+| **macOS (arm64)** | Yes | Yes (`Qt 6.12.0`: workspace tests, release Gallery, desktop interaction checks in both framing modes and self-drawn fullscreen; [scope](docs/validation-report.md#12-qt-612-gallery-desktop-validation-2026-11-21)) | CI configured for `Qt 6.12.0`; updated runner execution and Developer ID signing/notarization pending |
 | **Windows (x64 MSVC)** | Yes | Win10 19045 + Qt `6.10.3`: build, directory packaging and native smoke test pass; user confirms no white borders; one resource-cleanup assertion fails ([details](docs/windows-10-border.md)) | Prior `alpha.1` CI passed on `6.9.3`; updated CI, transition visual checks, MSIX install/launch and signing remain pending |
-| **Linux (x64 GCC + `lld`)** | Yes | N/A on macOS host (`scripts/package_linux.sh`) | Prior `alpha.1` baseline CI passed headless `xvfb-xcb`; post-parity Linux CI, real X11 WM, and native Wayland compositor QA pending Linux runner/desktop |
+| **Linux (x64 GCC + `lld`)** | Yes | User reports manual testing passed; not rerun on this macOS host | CI configured for `Qt 6.12.0`; updated runner execution pending; X11/Wayland-specific manual coverage unspecified |
 
 *(Source-resource coverage of RinUI's runtime tree and automated `--smoke-test` checks establish resource loading, startup, frame mode selection, NavigationView/ErrorPage/ScrollView behavior, theme toggle, multi-window, and i18n, rather than replacing full manual GUI QA of every upstream control.)*
 
@@ -127,7 +127,7 @@ cmake --build build --target rinui_gallery_rust
 
 On macOS, both the Gallery and `MacWindowOptions::default()` use RinUI's self-drawn QML titlebar and traffic-light controls by conservative host policy (whereas upstream RinUI QML defaults to native framing on macOS when PyObjC is present). Opt into upstream macOS framing explicitly with `--upstream-mac-frame` or `MacWindowOptions::upstream_compatible()`.
 
-> **Gallery Screenshots**: Automated `offscreen`, Xvfb `xcb`, Windows QPA, and Cocoa QPA startup checks pass, while interactive desktop visual QA screenshots have not yet been captured for `v0.1.0-alpha.1`.
+> **Gallery Desktop QA**: Qt `6.12.0` macOS computer-use checks cover representative controls, themes, multi-window behavior both framing modes, and self-drawn fullscreen. See the [validation record](docs/validation-report.md#12-qt-612-gallery-desktop-validation-2026-11-21); this is not exhaustive QA of every upstream control.
 
 ---
 
@@ -171,7 +171,7 @@ fn main() -> ExitCode {
 
 ## Known Limitations (`v0.1.0-alpha.1`)
 
-- Interactive desktop visual QA (macOS Cocoa traffic-light geometry/fullscreen restore on latest changes, Windows 10 Acrylic & Windows 11 DWM Mica/Acrylic/Snap Layouts/multi-monitor DPI, real Linux X11 WM and native Wayland compositors) and post-parity Windows/Linux CI runs remain open until run on physical desktops / CI runners.
+- Exhaustive control and multi-monitor QA, Windows 10 Acrylic & Windows 11 DWM Mica/Acrylic/Snap Layouts/DPI, and updated CI runs remain open. macOS representative desktop/fullscreen checks passed on Qt `6.12.0`; Linux manual testing is user-reported with X11/Wayland-specific coverage unspecified.
 - Credentialed signing and distribution checks (Apple Developer ID signing/notarization, Windows Authenticode signing, and signed MSIX install/launch/uninstall) have not been executed without signing certificates; scripts default to ad-hoc (macOS) or `-SkipSign` unsigned MSIX (Windows).
 - Building on Apple Silicon with Xcode 26 (Clang 21) and Qt `< 6.11.1` requires `CXXFLAGS="-include arm_acle.h"` ([QTBUG-145239](https://qt-project.atlassian.net/browse/QTBUG-145239)).
 

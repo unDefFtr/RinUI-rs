@@ -457,3 +457,70 @@ Local macOS arm64 / Qt 6.12.0. Logs for final lint/test commands: `/private/tmp/
 The generated CXX-Qt init archives retained the ranlib empty-symbol-table warning. The Widgets test linker also ignored a duplicate Homebrew rpath; expected QML fixture/font diagnostics remain. Both Clippy commands and both final test commands exited 0.
 
 Windows/Linux builds and physical desktop checks, MSIX packaging/install/startup, Developer ID / Authenticode signing, release packaging/native Cocoa startup and the standalone engine_config_demo command remain **未执行 in this follow-up**. No reset, commit, push or publication is performed; upstream, mtktools and skills are not edited.
+
+
+## 12. Qt 6.12 Gallery Desktop Validation (2026-11-21)
+
+Host: macOS **26.4 (25E246), arm64**, Homebrew Qt **6.12.0**, Apple Clang **17.0.0 (clang-1700.4.4.1)**, rustc **1.97.1**. The source baseline was `058f70c`; the pinned upstream submodule remained unmodified. Build and test commands explicitly set `QMAKE=/opt/homebrew/opt/qt/bin/qmake` and unset `CXXFLAGS`, without the old Qt 6.9 ARM ACLE workaround. This local compiler run does not independently exercise Apple Clang 21.
+
+### Automated checks
+
+| Check | Result |
+|---|---|
+| `python3 scripts/audit_upstream.py` | Passed; pinned SHA `46d77fa8371ff0e9f46a10a2eb66612dab123269`, 115 runtime files, 23 context references |
+| `cargo fmt --all -- --check` | Passed |
+| `cargo build --release -p rinui-gallery --offline` | Passed |
+| `QT_QPA_PLATFORM=offscreen cargo test --workspace --offline -j 2` | Passed, including all 25 isolated parity regression workers and runtime/session tests |
+| Release binary `--smoke-test`, offscreen, launched from `/private/tmp` with a temporary config | Passed; `qpa=offscreen`, `mac_frame_mode=self-drawn` |
+| `actionlint .github/workflows/ci.yml` | Passed after workflow edits |
+
+The initial concurrent test compilation was stopped to reduce memory pressure, then rerun with `-j 2` to completion. Generated CXX-Qt init archives retain their existing ranlib empty-symbol-table warnings. QML diagnostics include upstream ScrollBar attachment / `ScrollableTextArea.defaultHeight` warnings and test fixtures that intentionally request missing pages, controls and translation catalogs; passing checks do not imply warning-free QML.
+
+### Computer-use desktop checks
+
+The freshly built release binary was copied into a temporary macOS app wrapper (`/private/tmp/rinui-qt612-gallery-validation/RinUIQt612UITest.app`) so the computer-use tool could attach to it while standalone deployment was running. This wrapper uses the installed Homebrew Qt; it is not the self-contained distribution. Both explicit launches used Cocoa QPA, embedded resources, `--locale en_US`, and separate temporary `--config-dir` paths. Screenshots and accessibility state were inspected during actual mouse/keyboard interaction.
+
+| Scope | Observed result |
+|---|---|
+| Default self-drawn frame / Home | Gallery content, icons, fonts, navigation and titlebar rendered |
+| Rust Host Demo counter | Two increments displayed `2`; Reset returned it to `0` |
+| Themes and locale callbacks | Light/dark visual changes; locale callback reported `zh_CN` and switch back to `en_US`. This does not establish complete Chinese translation coverage of Gallery strings |
+| Secondary window | Opened in dark mode; toggling its theme changed it to light and the main window also appeared light after closing; host Close Secondary cleanup was exercised |
+| Search navigation | Entered `TextArea`, `CheckBox`, `Dialog`, and `CalendarDatePicker`; each corresponding sample opened |
+| TextArea | Typed `Qt 6.12 macOS Gallery test`; rich-text scrolling changed visible content and scroll position |
+| CheckBox | Selection changed to checked; Disable CheckBox disabled the checked control |
+| Dialog | Modal content and Cancel/OK rendered; Cancel dismissed it |
+| CalendarDatePicker | Calendar popup rendered; choosing November 28 updated the button to `11/28/2026` |
+| Self-drawn traffic lights | Entered fullscreen and returned to the original 1400 × 800 logical window with controls intact |
+| `--upstream-mac-frame` | Native standard window with accessible close/zoom/minimize controls; zoom and restore preserved content; CheckBox search and selection remained functional |
+| Main-window close | Both explicit test processes exited `0` |
+
+Native green-button zoom/restore was observed; a separate native macOS fullscreen-space transition is not claimed. These are representative desktop checks, not exhaustive control, multi-monitor or signing verification.
+
+### Self-contained distribution follow-up
+
+`QMAKE=/opt/homebrew/opt/qt/bin/qmake ./scripts/package_macos.sh target/release/rinui-gallery dist/qt-6.12.0` completed successfully. The output is `dist/qt-6.12.0/RinUIGallery.app`. Homebrew `macdeployqt` emitted missing-dependency diagnostics for optional Qt modules; the existing script pruned optional plugins, relocated transitive libraries, checked Mach-O dependencies/rpaths and applied an ad-hoc signature. No packaging script changes were needed.
+
+| Check | Result |
+|---|---|
+| `codesign --verify --deep --strict --verbose=2` | Passed; valid on disk and satisfies its designated requirement |
+| Bundled QtCore framework metadata | Version `6.12`, matching the local Qt 6.12.0 installation |
+| Copy to `/private/tmp/rinui-qt612-gallery-validation/standalone/RinUIGallery.app`, run outside the checkout with external Qt plugin/QML/dynamic-library environment paths unset | Passed |
+| Isolated bundle Cocoa `--smoke-test`, default frame | Exit `0`; `mac_diagnostic=self_drawn`, two-window / TextArea / ErrorPage recovery / ScrollView assertions passed |
+| Isolated bundle Cocoa `--upstream-mac-frame --smoke-test` | Exit `0`; `mac_diagnostic=native_cocoa`, same assertions passed |
+| Computer-use on the isolated distribution | Home rendered; Rust Host Demo opened, Increment displayed `1`, and the theme toggle visibly changed the window to dark |
+
+The distribution is locally ad-hoc signed, not Developer ID signed or notarized.
+
+### CI baseline change
+
+After the release build, workspace tests and desktop checks passed, `.github/workflows/ci.yml` was updated from **6.9.3 to 6.12.0** for `macos-latest` (`clang_64`) and `ubuntu-latest` (`linux_gcc_64`). Both retain `qt5compat qtshadertools`; Windows remains **6.10.3**. Qt's official online repository metadata was checked for both architectures and both add-on packages:
+
+- [macOS Qt 6.12.0 repository metadata](https://download.qt.io/online/qtsdkrepository/mac_x64/desktop/qt6_6120/qt6_6120/Updates.xml)
+- [Linux Qt 6.12.0 repository metadata](https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/qt6_6120/qt6_6120/Updates.xml)
+
+Removed the macOS Qt 6.9.3 `arm_acle.h` force-include step, which was scoped to the old baseline. Changed the existing Windows PATH append from `echo` to `printf '%s\n'` to satisfy ShellCheck without changing its emitted path. The user reports Linux manual testing passed; no Linux tests were rerun on this macOS host, and compositor-specific coverage was not supplied. Updated GitHub-hosted CI was not run during these local checks.
+
+Local command logs are under `/private/tmp/rinui-qt612-gallery-validation/` (`build.log`, `tests.log`, `package.log`, `codesign.log`, `smoke-raw.log`, `smoke-cocoa-default.log`, `smoke-cocoa-native.log`, `ui.log`, `ui-native.log`, `ui-standalone.log`) and are temporary machine-local evidence. Final `git diff --check`, workflow lint and upstream audit passed. The user-owned `mtktools/` directory was left untouched.
+
+Before submission, `origin/main` advanced to `d147710` (Windows Qt 6.12.0). This change was rebased onto it, preserving its Windows aqt source pin and MSVC conformance flags. The resulting CI matrix uses Qt 6.12.0 on all three platforms; the local test scope above is unchanged.

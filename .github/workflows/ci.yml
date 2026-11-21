@@ -37,7 +37,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            qt_version: "6.9.3"
+            qt_version: "6.12.0"
             qt_arch: clang_64
             qt_modules: "qt5compat qtshadertools"
           - os: windows-latest
@@ -47,7 +47,7 @@ jobs:
             # Released aqt 3.3.0 cannot resolve the Qt 6.11+ Windows repository layout.
             qt_aqt_source: "git+https://github.com/miurahr/aqtinstall.git@5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7"
           - os: ubuntu-latest
-            qt_version: "6.9.3"
+            qt_version: "6.12.0"
             qt_arch: linux_gcc_64
             qt_modules: "qt5compat qtshadertools"
     runs-on: ${{ matrix.os }}
@@ -93,7 +93,7 @@ jobs:
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
             QT_DIR_MIXED="$(cygpath -m "${QT_DIR}")"
             QMAKE_BIN="${QT_DIR_MIXED}/bin/qmake.exe"
-            echo "${QT_DIR}\\bin" >> "${GITHUB_PATH}"
+            printf '%s\n' "${QT_DIR}\\bin" >> "${GITHUB_PATH}"
           else
             QMAKE_BIN="${QT_DIR}/bin/qmake"
           fi
@@ -117,24 +117,6 @@ jobs:
         run: |
           rustc --version
           cargo --version
-
-      - name: Work around Qt 6.9.3 ARM64 __yield Clang 21 incompatibility
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          # Qt 6.9.x's qyieldcpu.h calls the ACLE __yield() intrinsic behind
-          # __has_builtin(__yield) without including <arm_acle.h>. Apple Clang 21
-          # (Xcode 26) header-gates that declaration, so every C++ TU that pulls
-          # in <QtCore/qatomic.h> fails with -Wimplicit-function-declaration.
-          # QTBUG-145239 was fixed for Qt 6.11.1/6.12; force-include the ACLE
-          # header for cc-rs (including cxx-qt's own C++ sources) until the
-          # pinned Qt 6.9.3 toolchain is upgraded.
-          if [[ "$(uname -m)" == "arm64" ]]; then
-            echo "CXXFLAGS=${CXXFLAGS:+$CXXFLAGS }-include arm_acle.h" >> "${GITHUB_ENV}"
-            echo "Applied <arm_acle.h> force-include for arm64 macOS"
-          else
-            echo "Skipping <arm_acle.h> workaround on $(uname -m)"
-          fi
 
       - name: Enable MSVC C++ conformance for Qt headers
         if: runner.os == 'Windows'

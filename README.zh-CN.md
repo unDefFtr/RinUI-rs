@@ -15,7 +15,7 @@
 - **国际化与活动区域解耦**：系统区域与标签规范化（`zh-CN`、`zh_Hans_CN`、`zh`），RinUI 的 `en_US` 资源回退不再覆盖应用独有语种（如 `fr_FR`）或 `QLocale::setDefault()`；支持两阶段原子替换、失败回滚、可选目录卸载与多 Engine `retranslate()`。
 - **4 层所有权、已有 Qt 应用接入与通用对象互操作**：提供进程级 `RinUIRuntime<'app>`（支持新建或借用外部 `QGuiApplication` / `QApplication`）、多会话 `RinUISession<'app>`（`EngineMode::Shared` / `EngineMode::Private`）、弱引用检测失效的 `SessionHandle<'app>` / `HostHandle`、便捷入口 `RinUIHost`，以及带类型检查的根对象属性读写（`set_root_property` / `get_root_property`）、同步方法调用（`invoke_root_method`）和受控 `configure_engine`。
 - **原生平台适配**：
-  - **macOS**：显式区分 `MacWindowOptions::self_drawn()`（默认自绘）与 `MacWindowOptions::upstream_compatible()` / `native()`，ARC Objective-C++ `NSWindow` 透明标题栏与交通灯定位（已在本地 `Qt 6.12.0` 验证 `offscreen` 及独立 `.app` 原生 Cocoa 两种模式启动冒烟；完整交互式视觉 QA 待执行）。
+  - **macOS**：显式区分 `MacWindowOptions::self_drawn()`（默认自绘）与 `MacWindowOptions::upstream_compatible()` / `native()`，ARC Objective-C++ `NSWindow` 透明标题栏与交通灯定位（`Qt 6.12.0` 双模式桌面交互与自绘全屏检查已通过，见[验证范围](docs/validation-report.md#12-qt-612-gallery-desktop-validation-2026-11-21)）。
   - **Windows**：Runtime 寿命 C++ `WinEventFilter` & `WinEventManager`（`WM_NCCALCSIZE`、`WM_GETMINMAXINFO`、`WM_NCHITTEST`、Win11 Snap Layouts `HTMAXBUTTON`、DWM Mica/Acrylic/Tabbed、Win10 `ACCENT_DISABLED` 修复），及独立于 Python/PyInstaller 的 `package_msix.ps1` MSIX 与可选 Authenticode 签名入口（基线 `alpha.1` CI 曾验证；Parity 改动后 Windows CI、MSIX 安装启动及物理桌面视觉验收待执行）。
   - **Linux**：X11 / Wayland Qt 合成器集成，对不支持的 Windows DWM 背景特效安全返回 `-2`（基线 CI 仅验证 `offscreen` 与 headless `xvfb-xcb`；Parity 改动后 Linux CI、真实 X11 WM 及原生 Wayland 合成器实机验收待执行）。
 - **双资源加载模式**：
@@ -33,14 +33,14 @@
 | Rust 工具链 | CI：`rustc 1.100.0`；本地 macOS：`rustc 1.97.1`（MSRV `1.85`） |
 | `cxx-qt` / `cxx-qt-lib` / `cxx-qt-build` / `qt-build-utils` | `0.10.0` |
 | `cxx` | `1.0` |
-| Qt 6 | CI：Windows MSVC 使用 `Qt 6.10.3`，macOS arm64、Ubuntu GCC+`lld` 使用 `6.9.3`；本地 macOS：`Qt 6.12.0` & `6.9.3`（需 `Qt5Compat` 与 `QtShaderTools`） |
+| Qt 6 | CI：Windows MSVC、macOS arm64、Ubuntu GCC+`lld` 均使用 `Qt 6.12.0`；本地 macOS：`Qt 6.12.0` & `6.9.3`（需 `Qt5Compat` 与 `QtShaderTools`） |
 | CMake | `>= 3.24`（本地验证 `4.4.0`） |
 
 | 平台 | 已实现 | Parity 改动后本地验证 | CI / 物理桌面与签名状态 |
 |---|---|---|---|
-| **macOS (arm64)** | 是 | 是（`Qt 6.12.0`：`audit_upstream.py`、`cargo test --workspace`、`qt-widgets-test`、`engine_config_demo`、隔离 `.app` 严格 Cocoa QPA 双模式冒烟） | 基线 `alpha.1` CI 曾通过 `Qt 6.9.3`；最新交互式视觉/全屏回归与 Developer ID 签名/公证尚未执行 |
+| **macOS (arm64)** | 是 | 是（`Qt 6.12.0`：工作区测试、release Gallery、双标题栏模式桌面交互与自绘全屏检查；[范围](docs/validation-report.md#12-qt-612-gallery-desktop-validation-2026-11-21)） | CI 已配置为 `Qt 6.12.0`；新版 Runner 执行与 Developer ID 签名/公证待验证 |
 | **Windows (x64 MSVC)** | 是 | Win10 19045 + Qt `6.10.3`：构建、目录打包与原生冒烟通过，用户确认窗口无白边；一项资源目录清理断言失败（[详情](docs/windows-10-border.md)） | 基线 `alpha.1` CI 曾通过 `6.9.3`；新版 CI、窗口状态切换视觉回归、MSIX 安装启动及签名仍待验证 |
-| **Linux (x64 GCC + `lld`)** | 是 | macOS 主机无 Linux 目标环境（已更新严格分层 CI 与 `xvfb-xcb` 标注） | 基线 `alpha.1` CI 曾通过 headless `xvfb-xcb`；Parity 改动后 Linux CI、真实 X11 WM 及原生 Wayland 合成器实机验收待执行 |
+| **Linux (x64 GCC + `lld`)** | 是 | 用户确认人工测试通过；本次未在 macOS 主机重跑 | CI 已配置为 `Qt 6.12.0`，新版 Runner 待执行；人工测试的具体 X11/Wayland 覆盖范围未指定 |
 
 *(资源文件收录率与 `--smoke-test` 验证初始化、导航与核心路径，不等同于全部控件的桌面人工 UI 验收。)*
 
@@ -79,7 +79,7 @@ cargo run -p rinui-gallery -- --dev
 
 macOS 上，Gallery 和 `MacWindowOptions::default()` 默认采用自绘 QML 标题栏（属于本宿主的保守兼容策略，而上游 QML 在具备 PyObjC 时默认启用原生标题栏）。如需显式对齐上游 macOS 原生框架行为，请传入 `--upstream-mac-frame`（或使用 `MacWindowOptions::upstream_compatible()` / `HostConfig::with_upstream_mac_frame()`）；`--native-mac-frame` 与 `--no-native-mac-frame` 仍保留并按“最后一个参数生效”解析。
 
-常用 Gallery 参数：`--dev [PATH]`、`--examples-dir <DIR>`、`--smoke-test`、`--auto-close-ms <MS>`、`--locale <LOCALE>`、`--upstream-mac-frame`、`--native-mac-frame`、`--no-native-mac-frame`、`--config-dir <DIR>`。（界面截图将在桌面交互式视觉验收后补充。）
+常用 Gallery 参数：`--dev [PATH]`、`--examples-dir <DIR>`、`--smoke-test`、`--auto-close-ms <MS>`、`--locale <LOCALE>`、`--upstream-mac-frame`、`--native-mac-frame`、`--no-native-mac-frame`、`--config-dir <DIR>`。（`Qt 6.12.0` macOS computer-use 验证范围见[测试记录](docs/validation-report.md#12-qt-612-gallery-desktop-validation-2026-11-21)，未逐一验收所有上游控件。）
 
 ### 4. 发布打包
 
@@ -137,7 +137,7 @@ fn main() -> ExitCode {
 
 ## 已知限制（`v0.1.0-alpha.1`）
 
-- 交互式桌面视觉验收（macOS 最新变动下的标题栏拖动/交通灯几何与退出全屏恢复、Windows 10 Acrylic 与 Windows 11 DWM Mica/Acrylic/Snap Layouts/多屏 DPI、真实 Linux X11 WM 与原生 Wayland 合成器）以及 Parity 改动后的 Windows/Linux CI 运行尚待对应系统或 Runner 执行。
+- 全控件与多屏验收、Windows 10 Acrylic 与 Windows 11 DWM Mica/Acrylic/Snap Layouts/DPI，以及更新后的 CI 运行仍待执行。macOS `Qt 6.12.0` 代表性桌面交互/全屏检查已通过；Linux 人工测试由用户确认，具体 X11/Wayland 覆盖范围未指定。
 - 受限于本机缺少 Apple Developer ID 证书/公证凭据与 Windows 代码签名证书，Developer ID 签名/公证、Windows Authenticode 签名以及签名 MSIX 的安装启动卸载流程当前未执行（脚本默认保留 ad-hoc 与 `-SkipSign` 无凭证输出）。
 - 尽管 QML 与资源通过 Qt `rcc` 内嵌至二进制，分发链接 Qt 6 动态库的二进制仍需遵守 Qt LGPLv3 / GPLv3 / Commercial 许可要求（见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)）。
 
