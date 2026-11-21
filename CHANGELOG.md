@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   Windows 10 Gallery white-border investigation. The local build and native
   smoke test pass, and the user confirmed no white borders in the upgraded
   window. Transition visual checks and one resource-cleanup regression
-  remain open. See [validation details](docs/windows-10-border.md).
+  remain open. See [validation details](https://github.com/unDefFtr/rinui-rs/blob/e9c6d3232e509f06d903ba9fd4991ed91097298c/docs/windows-10-border.md).
 
 Upstream parity completion across `rinui-rs` (`upstream/Rin-UI` unchanged at `46d77fa8371ff0e9f46a10a2eb66612dab123269`).
 

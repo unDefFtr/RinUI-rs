@@ -48,7 +48,7 @@ Upstream RinUI bundles `FluentSystemIcons-Resizable.ttf` and `FluentSystemIcons-
 `rinui-rs` links dynamically against Qt 6 (`QtCore`, `QtGui`, `QtQml`, `QtQuick`, `QtQuickControls2`) and requires Qt QML runtime plugins (`QtQuick`, `QtQuick.Controls`, `QtQuick.Controls.Basic`, `QtQuick.Templates`, `QtQuick.Layouts`, `QtQuick.Window`, `QtQuick.Effects`, `QtQuick.Shapes`, `QtQml`, `Qt5Compat.GraphicalEffects`) as well as Qt platform plugins (`qcocoa`, `qwindows`, `qxcb`, `qwayland`, etc.).
 
 - **Qt License**: LGPLv3 / GPLv3 / Commercial (depending on your Qt distribution and licensing election).
-- Embedding QML files and assets into Qt's resource system (`rcc`) does **not** remove Qt framework redistribution or LGPLv3/GPLv3/Commercial obligations when shipping binaries that link against Qt shared or static libraries. See `docs/packaging-and-licensing.md` for details.
+- Embedding QML files and assets into Qt's resource system (`rcc`) does **not** remove Qt framework redistribution or LGPLv3/GPLv3/Commercial obligations when shipping binaries that link against Qt shared or static libraries.
 
 ---
 
