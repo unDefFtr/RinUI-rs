@@ -104,15 +104,6 @@ jobs:
       - name: Build release Gallery
         run: cargo build --locked --release -p rinui-gallery
 
-      - name: Run workspace tests offscreen
-        shell: bash
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          cargo test --workspace --locked
-          cargo test --locked -p rinui-host --features qt-widgets-test --test external_qapplication
-          cargo run --locked -p rinui-host --example engine_config_demo
-
       - name: Prepare Qt redistribution licenses
         shell: bash
         run: |
@@ -635,3 +626,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           overwrite: true
+
+      # Keep successful smoke-tested packages available for diagnosis even if a test fails.
+      - name: Run workspace tests offscreen
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cargo test --workspace --locked
+          cargo test --locked -p rinui-host --features qt-widgets-test --test external_qapplication
+          cargo run --locked -p rinui-host --example engine_config_demo
+
+      - name: List remaining staged resource files after Windows test failure
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'rinui-dev-view-*' |
+            Get-ChildItem -Recurse -File | Select-Object -ExpandProperty FullName

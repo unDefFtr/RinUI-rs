@@ -137,7 +137,7 @@ Desktop packaging scripts are available for [macOS](./scripts/package_macos.sh),
 ### Releasing rinui-rs
 
 1. Merge the release commit into the default branch. From a clean checkout, verify that the Workspace version and both internal dependency versions in `Cargo.toml` match. Push the corresponding `v<version>` tag.
-2. **Release Gallery Draft** checks the tag, audits QML, verifies standalone Cargo packages, and builds and smoke-tests the Gallery on Windows x64, macOS arm64 and Linux x64 with Qt 6.12.0. The job artifacts expire after 14 days. The workflow uploads the four packages and `SHA256SUMS.txt` to a GitHub draft as permanent release assets.
+2. **Release Gallery Draft** checks the tag, audits QML, verifies standalone Cargo packages, and builds and smoke-tests the Gallery on Windows x64, macOS arm64 and Linux x64 with Qt 6.12.0. Smoke-tested packages remain in Actions for 14 days, even if a workspace test fails later. All workspace tests must pass before the workflow uploads the four packages and `SHA256SUMS.txt` as draft release assets.
 3. Wait for the workflow to succeed, review the draft and publish it as a maintainer from GitHub. A prerelease tag stays a GitHub prerelease. The draft uses `GITHUB_TOKEN`, and the maintainer's publish action starts **Publish crates.io**. If the event is suppressed, manually dispatch that workflow on the default branch with the same tag.
 4. Check the crates.io workflow summary for both library versions. It verifies the release assets and the tagged packages, publishes `rinui-platform`, waits for the index, then publishes `rinui-host`. `rinui-gallery` is private to the workspace.
 
