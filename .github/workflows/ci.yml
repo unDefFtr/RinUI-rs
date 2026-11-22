@@ -118,13 +118,6 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Enable MSVC C++ conformance for Qt headers
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          # Apply Qt's required flags to the standalone qt-widgets-test helper too.
-          echo "CXXFLAGS=${CXXFLAGS:+$CXXFLAGS }/Zc:__cplusplus /permissive-" >> "${GITHUB_ENV}"
-
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:

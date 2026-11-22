@@ -48,6 +48,12 @@ fn main() {
         .cpp_file(&theme_bridge_cpp)
         .cpp_file(&test_support_cpp);
 
+    if env::var_os("CARGO_FEATURE_QT_WIDGETS_TEST").is_some() {
+        builder = builder
+            .qt_module("Widgets")
+            .cpp_file(native_src_dir.join("rinui_widgets_test_helper.cpp"));
+    }
+
     let include_for_cc = native_include_dir.clone();
     // Safety: adds native/include directly so C++ translation units resolve local headers.
     unsafe {
@@ -80,35 +86,6 @@ fn main() {
     }
 
     builder.build().reexport_dependency("cxx-qt-lib").export();
-
-    if env::var_os("CARGO_FEATURE_QT_WIDGETS_TEST").is_some() {
-        compile_widgets_test_helper(&native_src_dir);
-    }
-}
-
-fn compile_widgets_test_helper(native_src_dir: &Path) {
-    let helper_cpp = native_src_dir.join("rinui_widgets_test_helper.cpp");
-    println!("cargo::rerun-if-changed={}", helper_cpp.display());
-
-    let qtbuild = qt_build_utils::QtBuild::new(vec![
-        "Core".to_owned(),
-        "Gui".to_owned(),
-        "Widgets".to_owned(),
-    ])
-    .expect("Could not locate Qt 6 Widgets for qt-widgets-test feature");
-
-    let mut build = cc::Build::new();
-    build.cpp(true).std("c++17").file(&helper_cpp);
-
-    for inc in qtbuild.include_paths() {
-        build.include(inc);
-    }
-    for fw in qtbuild.framework_paths() {
-        build.flag(format!("-F{}", fw.display()));
-    }
-
-    qtbuild.cargo_link_libraries(&mut build);
-    build.compile("rinui-widgets-test-helper");
 }
 
 fn compile_macos_native(native_include_dir: &Path, native_src_dir: &Path) {
