@@ -60,7 +60,7 @@ Explore RinUI's Fluent-inspired Qt Quick/QML controls through interactive sample
 
 
 > [!NOTE]
-> This repository is `rinui-rs` (`0.1.0-alpha.1`). The documentation layout is adapted from upstream RinUI; branding and selected screenshots have been updated for this repository.
+> This repository is `rinui-rs` (`0.1.0-alpha.2`). The documentation layout is adapted from upstream RinUI; branding and selected screenshots have been updated for this repository.
 
 ### Features
 * Elegant Fluent Design controls (WIP)
@@ -100,7 +100,7 @@ Import RinUI in your QML file:
 import RinUI
 ```
 
-Add `rinui-host = "0.1.0-alpha.1"` to your application's `[dependencies]` once the crate is published. The crate bundles the native bridges and upstream QML, so applications can build without cloning the submodule. Use it to load your QML from Rust.
+Add `rinui-host = "0.1.0-alpha.2"` to your application's `[dependencies]` once the crate is published. The crate bundles the native bridges and upstream QML, so applications can build without cloning the submodule. Use it to load your QML from Rust.
 
 ```rust
 use rinui_host::{HostConfig, QmlSource, RinUIHost};

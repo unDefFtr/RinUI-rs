@@ -469,7 +469,7 @@ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rinui-gallery"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "cxx",
  "cxx-qt",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "rinui-host"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "cc",
  "cxx",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "rinui-platform"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "serde",
  "serde_json",

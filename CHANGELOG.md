@@ -6,12 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2]
+
+- Fixed Windows cleanup of staged RinUI resources after the final session closes.
+- Built the external Qt Widgets test helper through CXX-Qt to use the same Qt build configuration as the host.
+
 ### Windows toolchain
 - Move the Windows CI/package baseline from Qt 6.9.3 to Qt 6.10.3 for the
   Windows 10 Gallery white-border investigation. The local build and native
   smoke test pass, and the user confirmed no white borders in the upgraded
-  window. Transition visual checks and one resource-cleanup regression
-  remain open. See [validation details](https://github.com/unDefFtr/rinui-rs/blob/e9c6d3232e509f06d903ba9fd4991ed91097298c/docs/windows-10-border.md).
+  window. Transition visual checks remain open. See [validation details](https://github.com/unDefFtr/rinui-rs/blob/e9c6d3232e509f06d903ba9fd4991ed91097298c/docs/windows-10-border.md).
 
 Upstream parity completion across `rinui-rs` (`upstream/Rin-UI` unchanged at `46d77fa8371ff0e9f46a10a2eb66612dab123269`).
 
@@ -102,4 +106,5 @@ First cross-platform pre-release (`alpha.1`) of the independent Rust + Qt 6 host
 - Building on Apple Silicon with Xcode 26 / Apple Clang 21 against Qt < 6.11.1 requires `CXXFLAGS="-include arm_acle.h"` (`QTBUG-145239`; fixed in upstream Qt 6.11.1/6.12).
 - Qt framework LGPLv3/GPLv3/Commercial obligations apply when redistributing binaries (compiling QML into Qt `rcc` does not exempt Qt shared-library requirements).
 
+[0.1.0-alpha.2]: https://github.com/unDefFtr/rinui-rs/releases/tag/v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/unDefFtr/rinui-rs/commits/phase2-validation

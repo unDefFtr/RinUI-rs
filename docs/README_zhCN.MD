@@ -58,7 +58,7 @@ RinUI Gallery 用交互式示例浏览 RinUI 的 Fluent 风格 Qt Quick/QML 控�
 > 横幅中的图片来自 Pixiv，PID：[125975786](https://www.pixiv.net/artworks/125975786)
 
 > [!NOTE]
-> 本仓库为 `rinui-rs`（`0.1.0-alpha.1`）。文档结构改编自上游 RinUI，项目标识与部分截图已更新为本仓库版本。
+> 本仓库为 `rinui-rs`（`0.1.0-alpha.2`）。文档结构改编自上游 RinUI，项目标识与部分截图已更新为本仓库版本。
 
 ### 特性
 * 优雅的 Fluent Design 控件（WIP）
@@ -98,7 +98,7 @@ cargo run -p rinui-gallery -- --dev
 import RinUI
 ```
 
-待发布后，在应用的 `[dependencies]` 中添加 `rinui-host = "0.1.0-alpha.1"`。crate 内置原生桥接代码和上游 QML，构建应用无需克隆子模块。Rust 加载 QML 的方式如下。
+待发布后，在应用的 `[dependencies]` 中添加 `rinui-host = "0.1.0-alpha.2"`。crate 内置原生桥接代码和上游 QML，构建应用无需克隆子模块。Rust 加载 QML 的方式如下。
 
 ```rust
 use rinui_host::{HostConfig, QmlSource, RinUIHost};

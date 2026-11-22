@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -16,8 +16,8 @@ homepage = "https://rinui-rs.undef.work/"
 documentation = "https://rinui-rs.undef.work/"
 
 [workspace.dependencies]
-rinui-platform = { version = "0.1.0-alpha.1", path = "crates/rinui-platform" }
-rinui-host = { version = "0.1.0-alpha.1", path = "crates/rinui-host" }
+rinui-platform = { version = "0.1.0-alpha.2", path = "crates/rinui-platform" }
+rinui-host = { version = "0.1.0-alpha.2", path = "crates/rinui-host" }
 cxx = "1.0"
 cxx-qt = "0.10.0"
 cxx-qt-lib = { version = "0.10.0", features = ["qt_full"] }
