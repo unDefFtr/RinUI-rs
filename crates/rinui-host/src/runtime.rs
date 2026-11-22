@@ -505,7 +505,10 @@ impl EngineState {
             eng_pin
                 .as_mut()
                 .add_import_path(&QString::from(resource_view.qml_import_path().as_str()));
-            qt_bridge::rinui_platform_register_engine_objects(eng_pin.as_mut());
+            qt_bridge::rinui_platform_register_engine_objects(
+                eng_pin.as_mut(),
+                resource_view.load_root().is_some(),
+            );
 
             // Pre-first-frame native/self-drawn macOS titlebar signal on QML context.
             qt_bridge::rinui_engine_set_context_property_variant(
@@ -528,6 +531,9 @@ impl EngineState {
         let mut registered_context_names = HashSet::new();
         registered_context_names.insert("ThemeManager".to_owned());
         registered_context_names.insert("RinUINativeMacFrame".to_owned());
+        if cfg!(windows) && resource_view.load_root().is_some() {
+            registered_context_names.insert("RinUIStagedFonts".to_owned());
+        }
 
         Ok(Self {
             engine_id,

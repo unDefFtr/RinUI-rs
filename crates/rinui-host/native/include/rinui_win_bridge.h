@@ -1,13 +1,29 @@
 #pragma once
 
 #include <QAbstractNativeEventFilter>
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QUrl>
+#include <QVariant>
 
 class QQuickWindow;
 
 namespace rinui::win {
+
+class StagedFonts : public QObject {
+    Q_OBJECT
+
+public:
+    explicit StagedFonts(QObject* parent) : QObject(parent) {}
+    ~StagedFonts() override;
+
+    Q_INVOKABLE QVariant loadLocalFont(const QUrl& url);
+
+private:
+    QHash<QString, int> m_fonts;
+};
 
 class WinEventManager : public QObject {
     Q_OBJECT

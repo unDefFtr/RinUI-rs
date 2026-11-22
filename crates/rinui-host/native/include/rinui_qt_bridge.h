@@ -109,7 +109,7 @@ QString rinui_default_locale_name();
 QString rinui_canonicalize_locale_name(const QString& raw_tag);
 
 /// Register platform-specific QML context objects on the engine.
-void rinui_platform_register_engine_objects(QQmlApplicationEngine& engine);
+void rinui_platform_register_engine_objects(QQmlApplicationEngine& engine, bool staged_filesystem);
 
 /// Set a QObject* context property on engine->rootContext().
 /// Safety: `object` must remain alive on the GUI thread at least as long as `engine`.

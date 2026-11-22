@@ -128,7 +128,11 @@ impl TempViewDir {
 
 impl Drop for TempViewDir {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        if let Err(err) = fs::remove_dir_all(&self.path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(path = %self.path.display(), error = %err, "Could not remove staged RinUI resources");
+            }
+        }
     }
 }
 

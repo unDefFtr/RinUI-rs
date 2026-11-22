@@ -203,6 +203,31 @@ pub fn sanitize_runtime_qml(rel: &str, src_path: &Path) -> io::Result<Option<Str
     }
 }
 
+fn use_memory_backed_icon_font(text: String) -> String {
+    const NAME: &str = "property string name: fontLoader.name";
+    const SOURCE: &str = "source: Utils.fontIconSource";
+    // Patch both bindings together; a checkout may have a different loader.
+    if !text.contains(NAME) || !text.contains(SOURCE) {
+        return text;
+    }
+
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    text.replacen(
+        NAME,
+        &format!(
+            "readonly property url fontUrl: Qt.resolvedUrl(Utils.fontIconSource){newline}    \
+             readonly property var localFamily: RinUIStagedFonts.loadLocalFont(fontUrl){newline}    \
+             property string name: localFamily === undefined ? fontLoader.name : localFamily"
+        ),
+        1,
+    )
+    .replacen(
+        SOURCE,
+        "source: localFamily === undefined ? fontUrl : \"\"",
+        1,
+    )
+}
+
 /// Materialize a complete sanitized `RinUI` module directory from `src_rinui_dir` into
 /// `dst_rinui_dir`, preserving directory layout while rewriting `qmldir` and host-patched QML files.
 #[allow(dead_code)]
@@ -224,6 +249,13 @@ pub fn materialize_sanitized_rinui_tree(
             let (sanitized_text, file_drops) = sanitize_qmldir_file(rel, &src_path)?;
             drops.extend(file_drops);
             fs::write(&dst_path, sanitized_text)?;
+        } else if cfg!(windows) && rel == "utils/FontIconLoader.qml" {
+            // Qt's FontLoader caches file-based application fonts beyond engine teardown.
+            // Load local fonts from memory so Windows can delete the staged files.
+            fs::write(
+                &dst_path,
+                use_memory_backed_icon_font(fs::read_to_string(&src_path)?),
+            )?;
         } else if let Some(patched) = sanitize_runtime_qml(rel, &src_path)? {
             fs::write(&dst_path, patched)?;
         } else {

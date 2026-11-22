@@ -61,7 +61,10 @@ pub mod ffi {
         pub fn rinui_default_locale_name() -> QString;
         pub fn rinui_canonicalize_locale_name(raw_tag: &QString) -> QString;
 
-        pub fn rinui_platform_register_engine_objects(engine: Pin<&mut QQmlApplicationEngine>);
+        pub fn rinui_platform_register_engine_objects(
+            engine: Pin<&mut QQmlApplicationEngine>,
+            staged_filesystem: bool,
+        );
 
         pub unsafe fn rinui_engine_set_context_property_object(
             engine: Pin<&mut QQmlApplicationEngine>,

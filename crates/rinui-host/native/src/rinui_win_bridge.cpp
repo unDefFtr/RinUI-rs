@@ -5,6 +5,8 @@
 #endif
 
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QHash>
 #include <QMetaObject>
@@ -1021,6 +1023,38 @@ void trigger_theme_manager_refresh()
 } // namespace
 
 namespace rinui::win {
+
+StagedFonts::~StagedFonts()
+{
+    if (qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+        for (int id : m_fonts) {
+            QFontDatabase::removeApplicationFont(id);
+        }
+    }
+}
+
+QVariant StagedFonts::loadLocalFont(const QUrl& url)
+{
+    if (!url.isLocalFile()) {
+        return {}; // QML falls back to FontLoader for other URLs.
+    }
+    const QString path = url.toLocalFile();
+    if (const auto it = m_fonts.constFind(path); it != m_fonts.cend()) {
+        return QFontDatabase::applicationFontFamilies(*it).value(0);
+    }
+
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly)) {
+        const QByteArray data = file.readAll();
+        file.close();
+        if (const int id = QFontDatabase::addApplicationFontFromData(data); id >= 0) {
+            m_fonts.insert(path, id);
+            return QFontDatabase::applicationFontFamilies(id).value(0);
+        }
+    }
+    qWarning() << "RinUI: Unable to load icon font" << url;
+    return QString{};
+}
 
 WinEventManager::WinEventManager(QObject* parent)
     : QObject(parent)

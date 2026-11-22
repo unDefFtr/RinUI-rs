@@ -33,6 +33,10 @@
 #include <QTranslator>
 #include <QUrl>
 
+#ifdef Q_OS_WIN
+#include "rinui_win_bridge.h"
+#endif
+
 #include <limits>
 #include <memory>
 #include <optional>
@@ -758,9 +762,17 @@ QString rinui_canonicalize_locale_name(const QString& raw_tag)
     return loc.name();
 }
 
-void rinui_platform_register_engine_objects(QQmlApplicationEngine& engine)
+void rinui_platform_register_engine_objects(QQmlApplicationEngine& engine, bool staged_filesystem)
 {
     rinui::platform::register_engine_objects(engine);
+#ifdef Q_OS_WIN
+    if (staged_filesystem) {
+        engine.rootContext()->setContextProperty(QStringLiteral("RinUIStagedFonts"),
+                                                 new rinui::win::StagedFonts(&engine));
+    }
+#else
+    Q_UNUSED(staged_filesystem);
+#endif
 }
 
 void rinui_engine_set_context_property_object(
