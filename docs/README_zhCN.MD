@@ -98,7 +98,7 @@ cargo run -p rinui-gallery -- --dev
 import RinUI
 ```
 
-待发布后，在应用的 `[dependencies]` 中添加 `rinui-host = "0.1.0-alpha.2"`。crate 内置原生桥接代码和上游 QML，构建应用无需克隆子模块。Rust 加载 QML 的方式如下。
+在应用的 `[dependencies]` 中添加 `rinui-host = "0.1.0-alpha.2"`。crate 内置原生桥接代码和上游 QML，构建应用无需克隆子模块。Rust 加载 QML 的方式如下。
 
 ```rust
 use rinui_host::{HostConfig, QmlSource, RinUIHost};

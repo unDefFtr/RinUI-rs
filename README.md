@@ -100,7 +100,7 @@ Import RinUI in your QML file:
 import RinUI
 ```
 
-Add `rinui-host = "0.1.0-alpha.2"` to your application's `[dependencies]` once the crate is published. The crate bundles the native bridges and upstream QML, so applications can build without cloning the submodule. Use it to load your QML from Rust.
+Add `rinui-host = "0.1.0-alpha.2"` to your application's `[dependencies]`. The crate bundles the native bridges and upstream QML, so applications can build without cloning the submodule. Use it to load your QML from Rust.
 
 ```rust
 use rinui_host::{HostConfig, QmlSource, RinUIHost};
